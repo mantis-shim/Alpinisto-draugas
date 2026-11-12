@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
+	import Brand from '#lib/components/Brand.svelte';
 
 	// Ridge profile in a 1000×200 box (y grows downwards). The app's steps are waypoints on the trail.
 	const ridge: [number, number][] = [
@@ -50,23 +52,23 @@
 
 <div class="page">
 <header class="container site-header">
-	<a class="brand" href={resolve('/')}>
-		<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 25 13 9l5 8.5 3.5-5L28 25z" /></svg>
-		Alpinisto draugas
-	</a>
+	<Brand />
 </header>
 
 <main>
 	<section class="hero">
 		<div class="container hero-text">
+			{#if page.url.searchParams.has('deleted')}
+				<p class="notice notice-success" role="status">Paskyra ir visi jos duomenys ištrinti.</p>
+			{/if}
 			<h1>Pasiruošk žygiui į kalnus be spėlionių</h1>
 			<p class="lead">
 				Alpinisto draugas patikrina tavo ekipuotę, įvertina, ar pasirinktas maršrutas tau per jėgas,
 				ir sudaro sąrašą, ką pasiimti ir ką dar reikia įsigyti. Sukurta pradedantiesiems žygeiviams.
 			</p>
 			<div class="actions">
-				<a class="button button-large" href={resolve('/register')}>Registruotis</a>
-				<a class="button button-secondary button-large" href={resolve('/login')}>Prisijungti</a>
+				<a class="button button-large" href={resolve('/(auth)/register')}>Registruotis</a>
+				<a class="button button-secondary button-large" href={resolve('/(auth)/login')}>Prisijungti</a>
 			</div>
 		</div>
 
@@ -133,20 +135,6 @@
 
 	.site-header {
 		padding-block: var(--space-4);
-	}
-	.brand {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--space-2);
-		font-size: var(--text-l);
-		font-weight: 780;
-		font-stretch: var(--stretch-display);
-		color: var(--c-text);
-		text-decoration: none;
-	}
-	.brand svg {
-		width: 1.75rem;
-		fill: var(--c-primary);
 	}
 
 	.hero-text {

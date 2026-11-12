@@ -16,7 +16,7 @@
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "eslint .",
 		"db:seed": "node --env-file-if-exists=.env scripts/seed.ts",
-		"check:password": "node scripts/check-password.ts"
+		"check:auth": "node scripts/check-auth.ts"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",
