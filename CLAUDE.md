@@ -240,8 +240,10 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 ## Conventions & workflow
 
 - ESLint and `svelte-check` must pass. English identifiers, Lithuanian UI text.
-- Git: one branch per user story, merged into `develop`. Code reaches `main` only via a reviewed pull request
-  (the `develop` branch doesn't exist yet).
+- Git: **everything has to be committed**. Don't leave work uncommitted.
+  - Work on `feature/{feature_name}` branches created from `develop`. When the feature is done, merge it into `develop`.
+  - Code reaches `main` only via a reviewed pull request from `develop`.
+  - The `develop` branch doesn't exist yet. Create it from `main` first.
 - Never commit secrets. New env vars go into `.env.example` without values.
 
 ## Open decisions (not in the spec — decide, then record the answer here)
