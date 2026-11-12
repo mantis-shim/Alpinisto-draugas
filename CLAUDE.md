@@ -48,11 +48,16 @@ Users: individual hikers, no IT skills assumed, often on a phone with a slow con
 cp .env.example .env          # fill ANTHROPIC_API_KEY
 docker compose up             # app http://localhost:5173, MongoDB localhost:27017 (no auth, dev only)
 docker compose exec app npm install <pkg>   # add a dependency (updates package.json + container)
+docker compose exec app npm run db:seed     # demo user demo@example.com / Demo1234 (re-runnable)
 docker compose down -v        # stop and wipe DB + container node_modules
+npm run check:password        # self-check for password hashing (plain Node, no DB)
 ```
 
 - The app container runs `npm install` on every start, so deps stay in sync with `package.json`.
-- `MONGODB_URI` is set by compose (`mongodb://mongo:27017/alpinisto-draugas`). Read it via `$env/dynamic/private`.
+- Env vars (SvelteKit 3): declare them in `src/env.ts` with `defineEnvVars`, which checks them at startup, and import them from
+  `$app/env/private`. `$env/dynamic/private` no longer exists. `MONGODB_URI` is set by compose (`mongodb://mongo:27017/alpinisto-draugas`).
+- The DB connection opens once in the `init` hook (`src/hooks.server.ts` → `src/lib/server/db.ts`).
+- The demo account is for development and the course demo only: no real personal data in seeds.
 - Hot reload on Windows needs file polling (`USE_POLLING=true`, already wired in `vite.config.ts`).
 - The local llama.cpp server is started separately on the host, and the app reaches it at `http://host.docker.internal:8080`.
 - There's no production Docker setup yet (dev only by decision). Production target: Linux, Node runtime, HTTPS 443, Mongo
@@ -73,28 +78,37 @@ Layered (Coad–Yourdon), from the component diagram. UI and orchestrator are th
 - **External LLM**: only the AI orchestration component calls it, behind one module, so the provider/model can be swapped.
 - Don't call OS APIs directly. Use the Node stdlib and framework abstractions (portability requirement).
 
-## Data model (3 collections)
+## Data model (4 collections)
+
+Source of truth: `src/lib/server/models.ts` (Mongoose models `User`, `Item`, `Hike`, `Session`). The enums live in
+`src/lib/domain.ts`, which is shared with the client and also holds `PRIVACY_POLICY_VERSION`.
 
 ```
-users
-  _id, email (unique), passwordHash, createdAt, updatedAt
+users                      // unique email index
+  _id, email (lowercased), passwordHash, createdAt, updatedAt
   fitnessAssessment?: { averageDailySteps: int, hikesLast3Years: int, level: LOW|MEDIUM|HIGH, completedDate }
-  consents: [{ version: string, givenAt, withdrawn: bool, withdrawnAt? }]
+  consents: [{ version, givenAt, withdrawn: bool, withdrawnAt? }]
 
-items                      // the user's inventory
+items                      // the user's inventory; index { userId, name }
   _id, userId, name, category: ItemCategory, suitability: Temperature[]
-  attributes: [{ name, value }]
+  attributes: [{ name, value }]   // value '' for tag-like attributes ("neperšlampamas")
 
-hikes
-  _id, userId, location, departureDate, returnDate, season: Season
+hikes                      // trip + generated plan = trip history; index { userId, createdAt: -1 }
+  _id, userId, location, departureDate, returnDate, season: Season, createdAt, updatedAt
   plan?: {                 // appears once recommendations are generated
     request: { createdAt, sentContent, usedItemIds[] }
     recommendations: {
-      difficulty: HikeDifficulty, feasibility: string, weather: string,
-      locationDescription: string, generatedAt,
-      items: [{ name, category, explanation, owned: bool, inventoryItemId? }]
+      difficulty: HikeDifficulty, feasibility, fitnessComparison, weather, clothing,
+      locationDescription?,   // omitted when there is no reliable info about the place
+      generatedAt,
+      items: [{ _id, name, category, explanation, owned: bool, inventoryItemId?,
+                priority?: REQUIRED|RECOMMENDED,   // missing items only (Būtinas/Rekomenduojamas)
+                purchased: bool }]                 // "Įsigyta"; also adds the item to the inventory
     }
   }
+
+sessions                   // TTL index on expiresAt: MongoDB deletes expired sessions itself
+  _id: SHA-256 of the cookie token (raw token never stored), userId, expiresAt
 
 ItemCategory  = FOOTWEAR | CLOTHING | SLEEP | NAVIGATION | MEDICINE | FOOD | TOOLS | OTHER
 Temperature   = COLD | WARM | HOT
@@ -103,10 +117,16 @@ HikeDifficulty= EASY | MEDIUM | HARD
 FitnessLevel  = LOW | MEDIUM | HIGH   (UI: žemas / vidutinis / aukštas)
 ```
 
-- Deleting a user deletes their `items` and `hikes` too (composition).
+- Deleting a user deletes their `items`, `hikes` and `sessions` too (composition). There's no DB cascade, so do it in code.
 - A history entry stores recommendations **as generated**. Never regenerate when reopening.
-- Known gaps the model needs (add them, see Open decisions): per recommended item `priority` (Būtinas/Rekomenduojamas)
-  and `purchased`; clothing recommendations text; the difficulty-vs-fitness verdict.
+- Dates without a time (departure/return) are stored as UTC midnight and shown as `YYYY-MM-DD`.
+- Email uniqueness is enforced by the index: check before inserting, and also handle the duplicate-key error (E11000).
+
+**Auth (decided):** server-side sessions, not JWT.
+- Login generates a random token with `node:crypto`. The cookie holds the token (httpOnly, Secure, SameSite=Lax), and the
+  `sessions` collection stores only its SHA-256 hash with `expiresAt`.
+- Logout, account deletion and consent withdrawal delete or check sessions, so they take effect immediately.
+- Passwords: `hashPassword` / `verifyPassword` in `src/lib/server/password.ts` (scrypt, OWASP cost). Never store or log plain passwords.
 
 ## Features
 
@@ -258,6 +278,8 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 ## Conventions & workflow
 
 - ESLint and `svelte-check` must pass. English identifiers, Lithuanian UI text.
+- Imports use the `#lib/...` alias (SvelteKit 3, no `$lib`) **with the `.ts` extension**, e.g. `#lib/server/models.ts`.
+  That way `scripts/*.ts` run with plain `node` (Node 24 strips types), so use const arrays, never TS `enum`.
 - Route paths are English (`/register`, `/login`). Internal links go through `resolve()` from `$app/paths`
   (ESLint `svelte/no-navigation-without-resolve`), and the target route must exist or the type check fails.
 - Git: **everything has to be committed**. Don't leave work uncommitted.
@@ -268,11 +290,9 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 
 ## Open decisions (not in the spec — decide, then record the answer here)
 
-1. **Sessions/auth mechanism.** Suggestion: httpOnly cookie with a random session ID stored in Mongo, passwords hashed with `node:crypto` scrypt (no extra deps).
-2. **Questionnaire**: exact questions and the scoring formula for žemas/vidutinis/aukštas.
-3. **"Far" departure date** threshold for the weather warning.
-4. **Local vision model**: which multimodal GGUF for llama.cpp, and a prompt that returns JSON (name, category, attributes, confidence).
-5. **PDF library** (must keep output ≤ 1 MB).
-6. **Data model gaps**: `priority` + `purchased` on recommended items, clothing text, difficulty-vs-fitness verdict.
-7. **Spec conflict**: UC-12's privacy text lists item photos as sent to the external AI, but the architecture keeps photos
+1. **Questionnaire**: exact questions and the scoring formula for žemas/vidutinis/aukštas.
+2. **"Far" departure date** threshold for the weather warning.
+3. **Local vision model**: which multimodal GGUF for llama.cpp, and a prompt that returns JSON (name, category, attributes, confidence).
+4. **PDF library** (must keep output ≤ 1 MB).
+5. **Spec conflict**: UC-12's privacy text lists item photos as sent to the external AI, but the architecture keeps photos
    on the local model. Follow the architecture and fix the policy text.
