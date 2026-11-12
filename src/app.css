@@ -1,0 +1,512 @@
+/*
+ * Alpinisto draugas: global styles.
+ * 1. Tokens   2. Base elements   3. Forms   4. Shared classes
+ * Colours use light-dark(), so a theme switch only sets color-scheme
+ * (data-theme="light" | "dark" on <html>; no attribute = follow the OS).
+ */
+@import '@fontsource-variable/archivo/wdth.css'; /* self-hosted: no Google CDN (GDPR, slow networks) */
+
+/* 1. Tokens ---------------------------------------------------------------- */
+
+:root {
+	color-scheme: light dark;
+
+	--font: 'Archivo Variable', system-ui, sans-serif;
+	--stretch-display: 74%; /* condensed, trail-signpost headings */
+	--stretch-ui: 92%;
+
+	/* Type scale (classic typographic scale, 16px base) */
+	--text-s: 0.875rem;
+	--text-m: 1rem;
+	--text-l: 1.125rem;
+	--text-xl: 1.3125rem;
+	--text-2xl: 1.5rem;
+	--text-3xl: 2.25rem;
+	--text-4xl: 3rem;
+	--text-5xl: 4.5rem;
+	--measure: 65ch;
+
+	--space-1: 0.25rem;
+	--space-2: 0.5rem;
+	--space-3: 0.75rem;
+	--space-4: 1rem;
+	--space-5: 1.5rem;
+	--space-6: 2rem;
+	--space-7: 3rem;
+	--space-8: 4rem;
+	--space-9: 6rem;
+
+	--radius-s: 4px; /* tags: rectangular like trail markers */
+	--radius-m: 6px; /* controls */
+	--radius-l: 12px; /* panels, dialogs */
+
+	/* Palette: spruce forest, mist, lichen, trail-marker red */
+	--c-bg: light-dark(#eef2ec, #0f1d15); /* mist / night forest */
+	--c-surface: light-dark(#ffffff, #16271d);
+	--c-surface-sunk: light-dark(#e2e8df, #0b1610);
+	--c-text: light-dark(#16281d, #e3eadd);
+	--c-text-muted: light-dark(#55625a, #a2b09f);
+	--c-line: light-dark(#cbd4c7, #2a3d31); /* decorative dividers */
+	--c-line-strong: light-dark(#7b897e, #6f8273); /* control borders, 3:1 */
+
+	--c-primary: light-dark(#1e4632, #9cc68a); /* spruce */
+	--c-primary-hover: light-dark(#153424, #b4d8a4);
+	--c-on-primary: light-dark(#ffffff, #10241a);
+	--c-primary-soft: light-dark(#dce7d6, #1f3a2a);
+
+	--c-forest: light-dark(#13301f, #153321); /* always-dark surfaces */
+	--c-on-forest: #e6ecdf;
+	--c-on-forest-muted: #a9b8a4;
+	--c-accent: #c9d66b; /* lichen, only on forest surfaces */
+
+	--c-danger: light-dark(#a8361f, #ef8f7b);
+	--c-on-danger: light-dark(#ffffff, #2a0f0a);
+	--c-danger-soft: light-dark(#f7e1dc, #3a1a14);
+	--c-warning: light-dark(#7a5200, #e8c15c);
+	--c-warning-soft: light-dark(#f8ecc9, #33290f);
+	--c-success: light-dark(#2c6a39, #8fd19a);
+	--c-success-soft: light-dark(#dcefd9, #16301c);
+	--c-focus: light-dark(#1f6e8c, #7cc3dc); /* glacier lake */
+
+	--shadow-overlay: 0 24px 48px -12px rgb(19 48 31 / 0.35);
+}
+
+:root[data-theme='light'] {
+	color-scheme: light;
+}
+:root[data-theme='dark'] {
+	color-scheme: dark;
+}
+
+/* 2. Base elements --------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html {
+	text-size-adjust: 100%;
+	-webkit-text-size-adjust: 100%;
+}
+
+body {
+	margin: 0;
+	min-height: 100dvh;
+	font-family: var(--font);
+	font-size: var(--text-m);
+	line-height: 1.55;
+	color: var(--c-text);
+	background: var(--c-bg);
+}
+
+h1,
+h2,
+h3,
+h4 {
+	margin: 0 0 var(--space-4);
+	font-weight: 760;
+	font-stretch: var(--stretch-display);
+	line-height: 1.1;
+	letter-spacing: -0.005em;
+	text-wrap: balance;
+}
+h1 {
+	font-size: var(--text-4xl);
+	line-height: 1;
+}
+h2 {
+	font-size: var(--text-3xl);
+}
+h3 {
+	font-size: var(--text-2xl);
+}
+h4 {
+	font-size: var(--text-xl);
+}
+
+p,
+ul,
+ol,
+dl,
+blockquote,
+figure,
+pre,
+table {
+	margin: 0 0 var(--space-4);
+}
+p {
+	max-width: var(--measure);
+	text-wrap: pretty;
+}
+ul,
+ol {
+	padding-left: 1.25em;
+}
+li + li {
+	margin-top: var(--space-1);
+}
+dt {
+	font-weight: 650;
+}
+dd {
+	margin: 0 0 var(--space-3);
+}
+
+a {
+	color: var(--c-primary);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.2em;
+}
+a:hover {
+	text-decoration-thickness: 2px;
+}
+
+strong,
+b {
+	font-weight: 650;
+}
+small {
+	font-size: var(--text-s);
+}
+code,
+kbd,
+pre {
+	font-family: ui-monospace, 'Cascadia Mono', monospace;
+	font-size: 0.9em;
+}
+pre {
+	overflow-x: auto;
+	padding: var(--space-4);
+	background: var(--c-surface-sunk);
+	border-radius: var(--radius-m);
+}
+
+blockquote {
+	padding-left: var(--space-4);
+	border-left: 3px solid var(--c-primary);
+}
+
+hr {
+	margin: var(--space-6) 0;
+	border: 0;
+	border-top: 1px solid var(--c-line);
+}
+
+img,
+svg,
+video {
+	display: block;
+	max-width: 100%;
+	height: auto;
+}
+
+table {
+	width: 100%;
+	border-collapse: collapse;
+	font-variant-numeric: tabular-nums;
+}
+th,
+td {
+	padding: var(--space-2) var(--space-3);
+	text-align: left;
+	vertical-align: top;
+	border-bottom: 1px solid var(--c-line);
+}
+th {
+	font-size: var(--text-s);
+	font-weight: 650;
+	color: var(--c-text-muted);
+}
+
+details {
+	padding-block: var(--space-3);
+	border-bottom: 1px solid var(--c-line);
+}
+summary {
+	font-weight: 650;
+	cursor: pointer;
+}
+
+:focus-visible {
+	outline: 3px solid var(--c-focus);
+	outline-offset: 2px;
+}
+
+::selection {
+	color: #13301f;
+	background: var(--c-accent);
+}
+
+/* 3. Forms ------------------------------------------------------------------ */
+
+label {
+	display: block;
+	margin-bottom: var(--space-1);
+	font-weight: 600;
+}
+
+/* Checkbox / radio inside its label: <label><input type="checkbox"> Tekstas</label> */
+label:has(> input[type='checkbox'], > input[type='radio']) {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-2);
+	font-weight: 400;
+	cursor: pointer;
+}
+
+input:not([type='checkbox'], [type='radio'], [type='range'], [type='file']),
+select,
+textarea {
+	width: 100%;
+	min-height: 2.75rem; /* 44px touch target */
+	padding: 0.625rem 0.75rem;
+	font: inherit;
+	color: var(--c-text);
+	background: var(--c-surface);
+	border: 1px solid var(--c-line-strong);
+	border-radius: var(--radius-m);
+}
+:is(input, select, textarea):focus-visible {
+	outline-offset: 0;
+	border-color: var(--c-focus);
+}
+textarea {
+	min-height: 6rem;
+	resize: vertical;
+}
+::placeholder {
+	color: var(--c-text-muted);
+	opacity: 1;
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+	flex: none;
+	width: 1.125rem;
+	height: 1.125rem;
+	margin: 0.2em 0 0;
+	accent-color: var(--c-primary);
+}
+input[type='range'],
+progress {
+	width: 100%;
+	accent-color: var(--c-primary);
+}
+
+input[type='file'] {
+	font: inherit;
+}
+input[type='file']::file-selector-button {
+	margin-right: var(--space-3);
+	padding: 0.5rem 1rem;
+	font: inherit;
+	font-weight: 650;
+	color: var(--c-primary);
+	background: transparent;
+	border: 1px solid var(--c-primary);
+	border-radius: var(--radius-m);
+	cursor: pointer;
+}
+
+/* Invalid only after the user interacted (or the server said so) */
+:is(input, select, textarea):user-invalid,
+[aria-invalid='true'] {
+	border-color: var(--c-danger);
+}
+
+:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+fieldset {
+	min-width: 0;
+	margin: 0 0 var(--space-5);
+	padding: var(--space-4) var(--space-5) var(--space-2);
+	border: 1px solid var(--c-line);
+	border-radius: var(--radius-l);
+}
+legend {
+	padding-inline: var(--space-2);
+	font-weight: 700;
+}
+
+/* .field = label + control + hint + error */
+.field {
+	display: grid;
+	gap: var(--space-1);
+	margin-bottom: var(--space-4);
+}
+.field > label {
+	margin: 0;
+}
+.field-hint {
+	margin: 0;
+	font-size: var(--text-s);
+	color: var(--c-text-muted);
+}
+.field-error {
+	margin: 0;
+	font-size: var(--text-s);
+	font-weight: 600;
+	color: var(--c-danger);
+}
+
+/* 4. Shared classes ---------------------------------------------------------- */
+
+/* Buttons. <button> is primary by default; <a class="button"> for links.
+   .button must out-rank the plain `a` colour; modifiers below share its specificity and win by order. */
+:where(button),
+.button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-2);
+	min-height: 2.75rem;
+	padding: 0.625rem 1.25rem;
+	font: inherit;
+	font-weight: 650;
+	font-stretch: var(--stretch-ui);
+	line-height: 1.2;
+	color: var(--c-on-primary);
+	text-decoration: none;
+	background: var(--c-primary);
+	border: 1px solid transparent;
+	border-radius: var(--radius-m);
+	cursor: pointer;
+	transition: background-color 0.15s, border-color 0.15s;
+}
+:where(button):hover,
+.button:hover {
+	background: var(--c-primary-hover);
+}
+.button-secondary {
+	color: var(--c-primary);
+	background: transparent;
+	border-color: var(--c-primary);
+}
+.button-secondary:hover {
+	background: var(--c-primary-soft);
+}
+.button-ghost {
+	color: var(--c-text);
+	background: transparent;
+}
+.button-ghost:hover {
+	background: var(--c-surface-sunk);
+}
+.button-danger {
+	color: var(--c-on-danger);
+	background: var(--c-danger);
+}
+.button-danger:hover {
+	background: color-mix(in srgb, var(--c-danger) 85%, black);
+}
+.button-large {
+	min-height: 3.25rem;
+	padding: 0.875rem 1.75rem;
+	font-size: var(--text-l);
+}
+
+/* Tags: Būtinas, Rekomenduojamas, Patikrinkite, item suitability */
+.tag {
+	display: inline-flex;
+	align-items: center;
+	padding: 0.125rem 0.5rem;
+	font-size: var(--text-s);
+	font-weight: 600;
+	line-height: 1.4;
+	color: var(--c-text);
+	background: var(--c-surface-sunk);
+	border-radius: var(--radius-s);
+}
+.tag-primary {
+	color: var(--c-primary);
+	background: var(--c-primary-soft);
+}
+.tag-warning {
+	color: var(--c-warning);
+	background: var(--c-warning-soft);
+}
+.tag-danger {
+	color: var(--c-danger);
+	background: var(--c-danger-soft);
+}
+.tag-success {
+	color: var(--c-success);
+	background: var(--c-success-soft);
+}
+
+/* Notices: disclaimers, form errors, success messages. Add role="status" or role="alert". */
+.notice {
+	margin: 0 0 var(--space-4);
+	padding: var(--space-3) var(--space-4);
+	color: var(--c-text);
+	background: var(--c-primary-soft);
+	border-radius: var(--radius-m);
+}
+.notice > :last-child {
+	margin-bottom: 0;
+}
+.notice-warning {
+	background: var(--c-warning-soft);
+}
+.notice-danger {
+	background: var(--c-danger-soft);
+}
+.notice-success {
+	background: var(--c-success-soft);
+}
+
+.panel {
+	padding: var(--space-5);
+	background: var(--c-surface);
+	border: 1px solid var(--c-line);
+	border-radius: var(--radius-l);
+}
+
+/* Native <dialog> for delete confirmations */
+dialog {
+	width: min(32rem, calc(100vw - 2rem));
+	padding: var(--space-6);
+	color: var(--c-text);
+	background: var(--c-surface);
+	border: 0;
+	border-radius: var(--radius-l);
+	box-shadow: var(--shadow-overlay);
+}
+dialog::backdrop {
+	background: rgb(11 22 16 / 0.55);
+}
+
+/* Loading indicator (e.g. while recommendations are generated) */
+.spinner {
+	display: inline-block;
+	width: 1.5rem;
+	height: 1.5rem;
+	border: 3px solid var(--c-primary-soft);
+	border-top-color: var(--c-primary);
+	border-radius: 50%;
+	animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+	to {
+		rotate: 1turn;
+	}
+}
+
+.container {
+	width: min(100% - 2rem, 72rem);
+	margin-inline: auto;
+}
+
+.visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
