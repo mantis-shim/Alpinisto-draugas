@@ -225,6 +225,24 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 - Explain specialised hiking terms for beginners.
 - Validation is consistent: required fields are marked, errors are shown next to the field.
 
+## Styling
+
+- One global stylesheet: `src/app.css` (imported in `src/routes/+layout.svelte`). Use its tokens (`--c-*`, `--space-*`,
+  `--text-*`, `--radius-*`) and classes. Don't hard-code colours or invent per-page buttons.
+- Base elements are already styled: headings, text, lists, tables, forms, `<dialog>`, `<details>`.
+- Shared classes:
+  - `.button` with `-secondary`, `-ghost`, `-danger`, `-large`. A plain `<button>` is primary by default.
+  - `.field`, `.field-hint`, `.field-error` for form fields.
+  - `.tag` with `-primary`, `-warning`, `-danger`, `-success` (Būtinas, Rekomenduojamas, Patikrinkite).
+  - `.notice` with `-warning`, `-danger`, `-success` (disclaimers, errors).
+  - `.panel`, `.spinner`, `.container`, `.visually-hidden`.
+- Theme: colours use `light-dark()` and follow the OS by default. A theme toggle sets `data-theme="light"|"dark"` on `<html>`.
+- Palette: spruce green primary, cool mist background, lichen accent **only on dark forest surfaces**, red **only for danger**.
+- Font: Archivo Variable, self-hosted via `@fontsource-variable/archivo` (no Google Fonts CDN, because of GDPR and slow networks).
+  Headings are condensed (`font-stretch: var(--stretch-display)`), like trail signposts.
+- The landing page (`src/routes/+page.svelte`) shows the app's 4 steps as waypoints on a mountain trail. Keep that the
+  only decorative moment, and keep other pages quiet.
+
 ## LLM notes (Anthropic, Claude Opus 5.5)
 
 - Package `@anthropic-ai/sdk`, model ID `claude-opus-5-5` (exact string, no date suffix). Read `ANTHROPIC_API_KEY` from env, server side only.
@@ -240,8 +258,12 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 ## Conventions & workflow
 
 - ESLint and `svelte-check` must pass. English identifiers, Lithuanian UI text.
-- Git: one branch per user story, merged into `develop`. Code reaches `main` only via a reviewed pull request
-  (the `develop` branch doesn't exist yet).
+- Route paths are English (`/register`, `/login`). Internal links go through `resolve()` from `$app/paths`
+  (ESLint `svelte/no-navigation-without-resolve`), and the target route must exist or the type check fails.
+- Git: **everything has to be committed**. Don't leave work uncommitted.
+  - Work on `feature/{feature_name}` branches created from `develop`. When the feature is done, merge it into `develop`.
+  - Code reaches `main` only via a reviewed pull request from `develop`.
+  - The `develop` branch doesn't exist yet. Create it from `main` first.
 - Never commit secrets. New env vars go into `.env.example` without values.
 
 ## Open decisions (not in the spec — decide, then record the answer here)
