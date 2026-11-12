@@ -50,7 +50,7 @@ docker compose up             # app http://localhost:5173, MongoDB localhost:270
 docker compose exec app npm install <pkg>   # add a dependency (updates package.json + container)
 docker compose exec app npm run db:seed     # demo user demo@example.com / Demo1234 (re-runnable)
 docker compose down -v        # stop and wipe DB + container node_modules
-npm run check:password        # self-check for password hashing (plain Node, no DB)
+npm run check:auth            # self-check: password hashing + registration rules (plain Node, no DB)
 ```
 
 - The app container runs `npm install` on every start, so deps stay in sync with `package.json`.
@@ -58,6 +58,10 @@ npm run check:password        # self-check for password hashing (plain Node, no 
   `$app/env/private`. `$env/dynamic/private` no longer exists. `MONGODB_URI` is set by compose (`mongodb://mongo:27017/alpinisto-draugas`).
 - The DB connection opens once in the `init` hook (`src/hooks.server.ts` → `src/lib/server/db.ts`).
 - The demo account is for development and the course demo only: no real personal data in seeds.
+- `npm run build` checks env vars too, so it needs `MONGODB_URI` set, e.g.
+  `MONGODB_URI=mongodb://localhost:27017/alpinisto-draugas npm run build`.
+- SvelteKit's CSRF origin check runs **only in production builds** (it's off in `vite dev`). Test cross-site behaviour
+  against `node build`.
 - Hot reload on Windows needs file polling (`USE_POLLING=true`, already wired in `vite.config.ts`).
 - The local llama.cpp server is started separately on the host, and the app reaches it at `http://host.docker.internal:8080`.
 - There's no production Docker setup yet (dev only by decision). Production target: Linux, Node runtime, HTTPS 443, Mongo
@@ -122,11 +126,27 @@ FitnessLevel  = LOW | MEDIUM | HIGH   (UI: žemas / vidutinis / aukštas)
 - Dates without a time (departure/return) are stored as UTC midnight and shown as `YYYY-MM-DD`.
 - Email uniqueness is enforced by the index: check before inserting, and also handle the duplicate-key error (E11000).
 
-**Auth (decided):** server-side sessions, not JWT.
-- Login generates a random token with `node:crypto`. The cookie holds the token (httpOnly, Secure, SameSite=Lax), and the
-  `sessions` collection stores only its SHA-256 hash with `expiresAt`.
-- Logout, account deletion and consent withdrawal delete or check sessions, so they take effect immediately.
-- Passwords: `hashPassword` / `verifyPassword` in `src/lib/server/password.ts` (scrypt, OWASP cost). Never store or log plain passwords.
+**Auth (built, `src/lib/server/auth.ts`):** server-side sessions, not JWT.
+- Login generates a random token with `node:crypto`. The `session` cookie holds the token (httpOnly, SameSite=Lax,
+  Secure outside plain-HTTP localhost, 30 days), and the `sessions` collection stores only its SHA-256 hash with `expiresAt`.
+- `src/hooks.server.ts` `handle` puts the user in `locals.user` (`{ id, email } | null`). Logout and account deletion
+  delete the session rows, so they take effect immediately.
+- **Every protected form action calls `requireUser(locals)`.** Layout guards don't run before actions.
+- Passwords: `hashPassword` / `verifyPassword` in `src/lib/server/password.ts` (scrypt, OWASP cost). Never store or log
+  plain passwords. Login checks unknown emails against a dummy hash, so both failure cases take the same time.
+- Rules and messages for registration live in `src/lib/validation.ts`.
+
+**Routes:**
+
+| Route | Who | What |
+|---|---|---|
+| `/` | visitors | landing page; logged-in users are redirected to `/plan`; `/?deleted` shows "account deleted" |
+| `(auth)/login`, `(auth)/register` | visitors | UC-1 + UC-12 consent; logged-in users are redirected to `/plan` |
+| `(app)/plan` | logged in | trip planning (placeholder until UC-6) |
+| `(app)/account` | logged in | email + "Ištrinti paskyrą" with a confirmation `<dialog>` (UC-9, action `?/delete`) |
+| `/logout` | logged in | `POST` only (a form button in the app header) |
+
+The `(app)` layout guards its pages and shows the header nav. Put new logged-in pages under `src/routes/(app)/`.
 
 ## Features
 
@@ -280,8 +300,9 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 - ESLint and `svelte-check` must pass. English identifiers, Lithuanian UI text.
 - Imports use the `#lib/...` alias (SvelteKit 3, no `$lib`) **with the `.ts` extension**, e.g. `#lib/server/models.ts`.
   That way `scripts/*.ts` run with plain `node` (Node 24 strips types), so use const arrays, never TS `enum`.
-- Route paths are English (`/register`, `/login`). Internal links go through `resolve()` from `$app/paths`
-  (ESLint `svelte/no-navigation-without-resolve`), and the target route must exist or the type check fails.
+- Route paths are English (`/register`, `/login`). Internal links and redirects go through `resolve()` from `$app/paths`
+  (ESLint `svelte/no-navigation-without-resolve`). In SvelteKit 3 it takes the **route ID including groups**:
+  `resolve('/(auth)/login')` gives `/login`. The route must exist or the type check fails.
 - Git: **everything has to be committed**. Don't leave work uncommitted.
   - Work on `feature/{feature_name}` branches created from `develop`. When the feature is done, merge it into `develop`.
   - Code reaches `main` only via a reviewed pull request from `develop`.
@@ -295,4 +316,7 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 3. **Local vision model**: which multimodal GGUF for llama.cpp, and a prompt that returns JSON (name, category, attributes, confidence).
 4. **PDF library** (must keep output ≤ 1 MB).
 5. **Spec conflict**: UC-12's privacy text lists item photos as sent to the external AI, but the architecture keeps photos
-   on the local model. Follow the architecture and fix the policy text.
+   on the local model. The registration text already follows the architecture.
+6. **Not built yet from UC-12**: withdrawing consent in account settings (FR-10), and making users re-accept when
+   `PRIVACY_POLICY_VERSION` changes (sequence diagram 18). Both are needed before the AI features (UC-3, UC-7) send any data.
+7. **Login rate limiting / lockout** is not in the spec and not built.
