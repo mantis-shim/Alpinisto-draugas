@@ -306,7 +306,8 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 - Git: **everything has to be committed**. Don't leave work uncommitted.
   - Work on `feature/{feature_name}` branches created from `develop`. When the feature is done, merge it into `develop`.
   - Code reaches `main` only via a reviewed pull request from `develop`.
-  - The `develop` branch doesn't exist yet. Create it from `main` first.
+  - **No AI attribution in git**: no `Co-Authored-By: Claude …` trailer and no "Generated with Claude Code" line in
+    commit messages, merge commits or pull request descriptions.
 - Never commit secrets. New env vars go into `.env.example` without values.
 
 ## Open decisions (not in the spec — decide, then record the answer here)
