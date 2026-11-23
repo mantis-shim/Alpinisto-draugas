@@ -1,10 +1,15 @@
 <!-- Inventory item fields (UC-2), shared by the add form and the edit page. Put inside a <form>. -->
 <script lang="ts">
-	import { CATEGORY_LABELS, ITEM_CATEGORIES, TEMPERATURE_LABELS, TEMPERATURES } from '#lib/domain.ts';
-	import type { ItemFormValues } from '#lib/validation.ts';
+	import {
+		CATEGORY_LABELS,
+		ITEM_CATEGORIES,
+		ITEM_LIMITS,
+		TEMPERATURE_LABELS,
+		TEMPERATURES
+	} from '#lib/domain.ts';
+	import type { ItemFormErrors, ItemFormValues } from '#lib/validation.ts';
 
-	let { values, errors }: { values: ItemFormValues; errors: { name?: string; category?: string } } =
-		$props();
+	let { values, errors }: { values: ItemFormValues; errors: ItemFormErrors } = $props();
 
 	// FR-12: name suggestions while typing (native <datalist>, no JS)
 	const SUGGESTIONS = [
@@ -41,7 +46,7 @@
 		name="name"
 		list="item-suggestions"
 		autocomplete="off"
-		maxlength="100"
+		maxlength={ITEM_LIMITS.name}
 		required
 		value={values.name}
 		aria-invalid={errors.name ? 'true' : undefined}
@@ -88,9 +93,15 @@
 
 <div class="field">
 	<label for="item-attributes">Kiti požymiai</label>
-	<textarea id="item-attributes" name="attributes" aria-describedby="item-attributes-hint" value={values.attributes}
+	<textarea
+		id="item-attributes"
+		name="attributes"
+		value={values.attributes}
+		aria-invalid={errors.attributes ? 'true' : undefined}
+		aria-describedby={errors.attributes ? 'item-attributes-hint item-attributes-error' : 'item-attributes-hint'}
 	></textarea>
 	<p class="field-hint" id="item-attributes-hint">
 		Kiekvienas požymis naujoje eilutėje, pvz., „spalva: ruda“ arba „neperšlampamas“. Neprivaloma.
 	</p>
+	{#if errors.attributes}<p class="field-error" id="item-attributes-error">{errors.attributes}</p>{/if}
 </div>

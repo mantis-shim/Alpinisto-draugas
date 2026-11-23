@@ -47,6 +47,9 @@ export type InventoryItem = Required<Omit<ItemInput, 'attributes'>> & {
 	attributes: { name: string; value: string }[];
 };
 
+/** Size limits for one item. The form, the schema and the <input> all use these; the inventory also goes into the LLM prompt. */
+export const ITEM_LIMITS = { name: 100, attributes: 30, attributeText: 100 } as const;
+
 export const SEASONS = ['WINTER', 'SPRING', 'SUMMER', 'AUTUMN'] as const;
 export type Season = (typeof SEASONS)[number];
 

@@ -2,7 +2,7 @@
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import ItemFields from '#lib/components/ItemFields.svelte';
-	import { CATEGORY_LABELS, TEMPERATURE_LABELS, type InventoryItem } from '#lib/domain.ts';
+	import { CATEGORY_LABELS, ITEM_CATEGORIES, TEMPERATURE_LABELS, type InventoryItem } from '#lib/domain.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -12,6 +12,18 @@
 	const emptyValues = { name: '', category: '', suitability: [], attributes: '' };
 	// open while the inventory is empty or the last submit needs fixing
 	const addOpen = $derived(data.items.length === 0 || !!form?.values);
+
+	// FR-27: search, filter and sort in the browser, so a slow connection costs no extra requests
+	let query = $state('');
+	let category = $state('');
+	let sort = $state('asc');
+	// "zygio" finds "Žygio batai": phone keyboards often skip the Lithuanian letters
+	const fold = (text: string) => text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+	const shown = $derived.by(() => {
+		const q = fold(query.trim());
+		const items = data.items.filter((i) => (!category || i.category === category) && fold(i.name).includes(q));
+		return sort === 'desc' ? items.reverse() : items; // the server sorts A–Ž; filter() already made a copy
+	});
 </script>
 
 <svelte:head><title>Inventorius – Alpinisto draugas</title></svelte:head>
@@ -22,14 +34,20 @@
 {#if form?.created}
 	<p class="notice notice-success" role="status">Daiktas „{form.created}“ pridėtas į inventorių.</p>
 {/if}
+{#if form?.deleted}
+	<p class="notice notice-success" role="status">Daiktas ištrintas iš inventoriaus.</p>
+{/if}
 {#if form?.missing}
 	<p class="notice notice-danger" role="alert">Šio daikto inventoriuje nebėra.</p>
+{/if}
+{#if data.items.length === 0}
+	<p class="notice" role="status">Inventoriuje dar nėra daiktų. <a href="#add-item">Pridėti daiktą</a></p>
 {/if}
 
 <details open={addOpen}>
 	<summary>Pridėti daiktą</summary>
 	<!-- novalidate: the server checks everything and answers in Lithuanian -->
-	<form method="POST" action="?/create" novalidate use:enhance>
+	<form id="add-item" method="POST" action="?/create" novalidate use:enhance>
 		{#if form?.duplicate}
 			<p class="notice notice-warning" role="alert">
 				Daiktas „{form.values.name}“ inventoriuje jau yra. Vis tiek pridėti dar vieną?
@@ -47,12 +65,41 @@
 	</form>
 </details>
 
-{#if data.items.length === 0}
-	<p class="notice" role="status">Inventoriuje dar nėra daiktų. Pridėk pirmąjį daiktą formoje aukščiau.</p>
-{:else}
+{#if data.items.length}
+	<search class="toolbar">
+		<div class="field query">
+			<label for="filter-query">Ieškoti pagal pavadinimą</label>
+			<input id="filter-query" type="search" autocomplete="off" bind:value={query} />
+		</div>
+		<div class="field">
+			<label for="filter-category">Filtruoti pagal kategoriją</label>
+			<select id="filter-category" bind:value={category}>
+				<option value="">Visos kategorijos</option>
+				{#each ITEM_CATEGORIES as c (c)}<option value={c}>{CATEGORY_LABELS[c]}</option>{/each}
+			</select>
+		</div>
+		<div class="field">
+			<label for="filter-sort">Rūšiuoti pagal pavadinimą</label>
+			<select id="filter-sort" bind:value={sort}>
+				<option value="asc">A–Ž</option>
+				<option value="desc">Ž–A</option>
+			</select>
+		</div>
+	</search>
+
+	<p class="count" role="status">
+		{shown.length === data.items.length
+			? `Daiktų: ${shown.length}`
+			: `Rasta: ${shown.length} iš ${data.items.length}`}
+	</p>
+
+	{#if shown.length === 0}
+		<p class="notice">Daiktų nerasta. Pakeisk paieškos žodį arba kategoriją.</p>
+	{/if}
+
 	<ul class="items">
-		{#each data.items as item (item.id)}
-			<li class="panel">
+		{#each shown as item (item.id)}
+			<li class="panel" id="item-{item.id}">
 				<h2>{item.name}</h2>
 				<p class="tags">
 					<span class="tag tag-primary">{CATEGORY_LABELS[item.category]}</span>
@@ -67,7 +114,7 @@
 				{/if}
 				<div class="actions">
 					<a class="button button-secondary" href={resolve('/(app)/inventory/[id]', { id: item.id })}>
-						Redaguoti
+						Redaguoti<span class="visually-hidden"> „{item.name}“</span>
 					</a>
 					<button
 						class="button-ghost"
@@ -77,7 +124,7 @@
 							deleteDialog.showModal();
 						}}
 					>
-						Ištrinti
+						Ištrinti<span class="visually-hidden"> „{item.name}“</span>
 					</button>
 				</div>
 			</li>
@@ -115,16 +162,45 @@
 		margin-bottom: var(--space-6);
 	}
 	details form {
+		max-width: 36rem;
 		margin-top: var(--space-4);
+	}
+	.toolbar {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		column-gap: var(--space-3);
+		align-items: end; /* controls stay level when a label wraps */
+	}
+	.query {
+		grid-column: 1 / -1;
+	}
+	@media (min-width: 48rem) {
+		.toolbar {
+			grid-template-columns: 2fr 1fr 1fr;
+		}
+		.query {
+			grid-column: auto;
+		}
+	}
+	.count {
+		font-size: var(--text-s);
+		color: var(--c-text-muted);
 	}
 	.items {
 		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
 		gap: var(--space-3);
 		padding: 0;
 		list-style: none;
 	}
 	.items li {
+		display: flex;
+		flex-direction: column;
 		margin: 0;
+		scroll-margin-top: var(--space-4);
+	}
+	.items .actions {
+		margin-top: auto; /* buttons line up along the bottom of each row */
 	}
 	h2 {
 		margin-bottom: var(--space-2);

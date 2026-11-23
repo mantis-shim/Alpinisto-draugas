@@ -51,6 +51,7 @@ docker compose exec app npm install <pkg>   # add a dependency (updates package.
 docker compose exec app npm run db:seed     # demo user demo@example.com / Demo1234 (re-runnable)
 docker compose down -v        # stop and wipe DB + container node_modules
 npm run check:auth            # self-check: password hashing + registration rules (plain Node, no DB)
+docker compose exec app npm run check:inventory   # self-check: inventory CRUD + item form rules against the dev DB (cleans up after itself)
 npm ci                        # on the host too: the container's node_modules is a separate volume, so the editor needs its own copy for types
 ```
 
@@ -94,7 +95,7 @@ users                      // unique email index
   fitnessAssessment?: { averageDailySteps: int, hikesLast3Years: int, level: LOW|MEDIUM|HIGH, completedDate }
   consents: [{ version, givenAt, withdrawn: bool, withdrawnAt? }]
 
-items                      // the user's inventory; index { userId, name }
+items                      // the user's inventory; index { userId, name } with Lithuanian collation (LT_COLLATION)
   _id, userId, name, category: ItemCategory, suitability: Temperature[]
   attributes: [{ name, value }]   // value '' for tag-like attributes ("neperšlampamas")
 
@@ -144,6 +145,8 @@ FitnessLevel  = LOW | MEDIUM | HIGH   (UI: žemas / vidutinis / aukštas)
 | `/` | visitors | landing page; logged-in users are redirected to `/plan`; `/?deleted` shows "account deleted" |
 | `(auth)/login`, `(auth)/register` | visitors | UC-1 + UC-12 consent; logged-in users are redirected to `/plan` |
 | `(app)/plan` | logged in | trip planning (placeholder until UC-6) |
+| `(app)/inventory` | logged in | UC-2 add form (`?/create`, duplicate warning) + UC-4 list with search/filter/sort in the browser, delete with a `<dialog>` (`?/delete`) |
+| `(app)/inventory/[id]` | logged in | UC-4 edit one item; someone else's id gets the same 404 as a missing one |
 | `(app)/account` | logged in | email + "Ištrinti paskyrą" with a confirmation `<dialog>` (UC-9, action `?/delete`) |
 | `/logout` | logged in | `POST` only (a form button in the app header) |
 

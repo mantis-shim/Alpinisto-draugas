@@ -22,6 +22,9 @@
 </form>
 
 <style>
+	form {
+		max-width: 36rem;
+	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;

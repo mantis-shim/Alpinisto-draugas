@@ -26,5 +26,6 @@ export const actions: Actions = {
 		const id = String((await request.formData()).get('id') ?? '');
 		// someone else's item looks exactly like a missing one
 		if (!(await deleteItem(user.id, id))) return fail(404, { missing: true });
+		return { deleted: true };
 	}
 };

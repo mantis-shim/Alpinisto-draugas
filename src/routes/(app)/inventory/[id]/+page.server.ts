@@ -20,6 +20,6 @@ export const actions: Actions = {
 		const { values, errors, input, ok } = readItemForm(await request.formData());
 		if (!ok) return fail(400, { values, errors });
 		if (!(await updateItem(user.id, params.id, input))) error(404, NOT_FOUND);
-		redirect(303, resolve('/(app)/inventory'));
+		redirect(303, `${resolve('/(app)/inventory')}#item-${params.id}`); // UC-4 step 8: land on the updated item
 	}
 };

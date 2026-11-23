@@ -1,6 +1,7 @@
 // Input rules shared by forms and server actions. Messages are shown to users as-is (Lithuanian).
 import {
 	ITEM_CATEGORIES,
+	ITEM_LIMITS,
 	TEMPERATURES,
 	type InventoryItem,
 	type ItemCategory,
@@ -26,6 +27,7 @@ export const isEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emai
 
 /** What the item form holds; sent back to the page so a failed submit keeps the user's input. */
 export type ItemFormValues = { name: string; category: string; suitability: string[]; attributes: string };
+export type ItemFormErrors = { name?: string; category?: string; attributes?: string };
 
 /** "Other attributes" textarea: one per line, "spalva: ruda" or a tag like "neperšlampamas". */
 export const parseAttributes = (text: string) =>
@@ -49,14 +51,22 @@ export function readItemForm(data: FormData) {
 		suitability: data.getAll('suitability').map(String),
 		attributes: String(data.get('attributes') ?? '')
 	};
-	const errors: { name?: string; category?: string } = {};
+	const attributes = parseAttributes(values.attributes);
+	const { name: maxName, attributes: maxAttributes, attributeText: maxText } = ITEM_LIMITS;
+
+	const errors: ItemFormErrors = {};
 	if (!values.name) errors.name = 'Įvesk daikto pavadinimą.';
+	else if (values.name.length > maxName) errors.name = `Pavadinimas per ilgas: daugiausia ${maxName} simbolių.`;
 	if (!ITEM_CATEGORIES.includes(values.category as ItemCategory)) errors.category = 'Pasirink kategoriją.';
+	if (attributes.length > maxAttributes || attributes.some((a) => a.name.length > maxText || a.value.length > maxText)) {
+		errors.attributes = `Požymių gali būti daugiausia ${maxAttributes}, kiekvienas – iki ${maxText} simbolių.`;
+	}
+
 	const input: ItemInput = {
 		name: values.name,
 		category: values.category as ItemCategory,
 		suitability: TEMPERATURES.filter((t) => values.suitability.includes(t)), // drops anything unknown
-		attributes: parseAttributes(values.attributes)
+		attributes
 	};
 	return { values, errors, input, ok: Object.keys(errors).length === 0 };
 }
