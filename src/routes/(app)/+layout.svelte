@@ -7,9 +7,9 @@
 	let { children }: LayoutProps = $props();
 
 	// `sub`: pages reached from this one, not listed in the nav; the link stays highlighted on them
-	const links: { route: '/(app)/plan' | '/(app)/account'; label: string; sub: string[] }[] = [
+	const links: { route: '/(app)/plan' | '/(app)/inventory' | '/(app)/account'; label: string; sub: string[] }[] = [
 		{ route: '/(app)/plan', label: 'Kelionės planavimas', sub: [] },
-		{ route: '/(app)/inventory', label: 'Inventorius' },
+		{ route: '/(app)/inventory', label: 'Inventorius', sub: [] },
 		{ route: '/(app)/account', label: 'Paskyra', sub: ['/(app)/questionnaire'] }
 	];
 
