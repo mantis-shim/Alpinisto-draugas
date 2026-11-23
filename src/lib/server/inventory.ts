@@ -1,20 +1,8 @@
 // Inventory CRUD (UC-2, UC-4). Every query is scoped by userId, so a user can only reach their own items.
 // Returns plain objects with a string id, ready to hand to a page (Mongoose documents are not serialisable).
 import { isObjectIdOrHexString } from 'mongoose';
-import type { ItemCategory, Temperature } from '#lib/domain.ts';
+import type { InventoryItem, ItemInput } from '#lib/domain.ts';
 import { Item } from '#lib/server/models.ts';
-
-export type ItemInput = {
-	name: string;
-	category: ItemCategory;
-	suitability?: Temperature[];
-	attributes?: { name: string; value?: string }[]; // value '' or missing for tag-like attributes
-};
-
-export type InventoryItem = Required<Omit<ItemInput, 'attributes'>> & {
-	id: string;
-	attributes: { name: string; value: string }[];
-};
 
 // Lithuanian alphabetical order (Ą next to A, not after Z); strength 2 also makes comparisons case-insensitive
 const lt = { locale: 'lt', strength: 2 };

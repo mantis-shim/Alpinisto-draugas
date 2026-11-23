@@ -8,6 +8,7 @@
 
 	const links = [
 		{ route: '/(app)/plan', label: 'Kelionės planavimas' },
+		{ route: '/(app)/inventory', label: 'Inventorius' },
 		{ route: '/(app)/account', label: 'Paskyra' }
 	] as const;
 </script>

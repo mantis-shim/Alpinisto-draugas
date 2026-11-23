@@ -4,6 +4,14 @@ import assert from 'node:assert/strict';
 import mongoose from 'mongoose';
 import { Item } from '#lib/server/models.ts';
 import { createItem, deleteItem, getItem, hasItemNamed, listItems, updateItem } from '#lib/server/inventory.ts';
+import { parseAttributes } from '#lib/validation.ts';
+
+// "Kiti požymiai" textarea: browsers submit \r\n, values may contain ":"
+assert.deepEqual(parseAttributes('spalva: ruda\r\n\r\n neperšlampamas \r\nišvykimas: 10:30\r\n: be pavadinimo'), [
+	{ name: 'spalva', value: 'ruda' },
+	{ name: 'neperšlampamas', value: '' },
+	{ name: 'išvykimas', value: '10:30' }
+]);
 
 if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI is not set (see .env.example)');
 await mongoose.connect(process.env.MONGODB_URI);

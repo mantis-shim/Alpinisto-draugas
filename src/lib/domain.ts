@@ -13,8 +13,39 @@ export const ITEM_CATEGORIES = [
 ] as const;
 export type ItemCategory = (typeof ITEM_CATEGORIES)[number];
 
+export const CATEGORY_LABELS: Record<ItemCategory, string> = {
+	FOOTWEAR: 'Avalynė',
+	CLOTHING: 'Apranga',
+	SLEEP: 'Nakvynė',
+	NAVIGATION: 'Navigacija',
+	MEDICINE: 'Pirmoji pagalba',
+	FOOD: 'Maistas ir vanduo',
+	TOOLS: 'Įrankiai',
+	OTHER: 'Kita'
+};
+
 export const TEMPERATURES = ['COLD', 'WARM', 'HOT'] as const;
 export type Temperature = (typeof TEMPERATURES)[number];
+
+export const TEMPERATURE_LABELS: Record<Temperature, string> = {
+	COLD: 'Šaltam orui',
+	WARM: 'Šiltam orui',
+	HOT: 'Karštam orui'
+};
+
+/** An inventory item as the user enters it (UC-2). */
+export type ItemInput = {
+	name: string;
+	category: ItemCategory;
+	suitability?: Temperature[];
+	attributes?: { name: string; value?: string }[]; // value '' or missing for tag-like attributes
+};
+
+/** An inventory item as pages get it. */
+export type InventoryItem = Required<Omit<ItemInput, 'attributes'>> & {
+	id: string;
+	attributes: { name: string; value: string }[];
+};
 
 export const SEASONS = ['WINTER', 'SPRING', 'SUMMER', 'AUTUMN'] as const;
 export type Season = (typeof SEASONS)[number];
