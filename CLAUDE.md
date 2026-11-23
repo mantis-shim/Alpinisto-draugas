@@ -51,6 +51,8 @@ docker compose exec app npm install <pkg>   # add a dependency (updates package.
 docker compose exec app npm run db:seed     # demo user demo@example.com / Demo1234 (re-runnable)
 docker compose down -v        # stop and wipe DB + container node_modules
 npm run check:auth            # self-check: password hashing + registration rules (plain Node, no DB)
+docker compose exec app npm run check:inventory   # self-check: inventory CRUD against the dev DB (cleans up after itself)
+npm ci                        # on the host too: the container's node_modules is a separate volume, so the editor needs its own copy for types
 ```
 
 - The app container runs `npm install` on every start, so deps stay in sync with `package.json`.
