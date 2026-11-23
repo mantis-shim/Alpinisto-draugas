@@ -1,7 +1,8 @@
 // Self-check for photo upload checks and WebP conversion (UC-3). Run: npm run check:photo
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { PHOTO_MAX_BYTES, PhotoError, photoToWebp } from '#lib/server/photo.ts';
+import { PHOTO_MAX_BYTES } from '#lib/domain.ts';
+import { PhotoError, photoToWebp } from '#lib/server/photo.ts';
 
 const blank = (width: number, height: number) =>
 	sharp({ create: { width, height, channels: 3, background: '#2f5d50' } });

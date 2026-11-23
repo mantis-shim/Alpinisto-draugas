@@ -2,9 +2,7 @@
 // Everything happens in memory: the photo is never written to disk or the database (FR-25).
 import decodeHeic from 'heic-decode';
 import sharp from 'sharp';
-
-/** FR-16. Production must accept request bodies this big: see BODY_SIZE_LIMIT in .env.example. */
-export const PHOTO_MAX_BYTES = 10 * 1024 * 1024;
+import { PHOTO_MAX_BYTES } from '#lib/domain.ts';
 
 // ponytail: 1024 px on the long side is enough to tell what an item is. Vision models downscale anyway, and fewer
 // pixels mean fewer image tokens and a faster answer (10 s budget, NŠ-1). Raise it if small print (labels) matters.

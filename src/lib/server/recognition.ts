@@ -13,6 +13,14 @@ export type RecognizedItem = {
 	confidence: number; // 0–100, as the model reports it (not calibrated)
 };
 
+/** ponytail: canned answer while no llama-server is set up (dev only, see the inventory page). Delete once one runs. */
+export const MOCK_RECOGNITION: RecognizedItem = {
+	name: 'Žygio batai',
+	category: 'FOOTWEAR',
+	attributes: [{ name: 'spalva', value: 'ruda' }],
+	confidence: 65 // below 70 on purpose, so the "Patikrinkite" tag shows
+};
+
 /** Recognition didn't work (server down, timeout, broken answer). The message is shown to the user as-is. */
 export class RecognitionError extends Error {}
 

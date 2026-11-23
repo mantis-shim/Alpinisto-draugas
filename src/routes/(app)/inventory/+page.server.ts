@@ -2,8 +2,9 @@ import { fail } from '@sveltejs/kit';
 import { requireUser } from '#lib/server/auth.ts';
 import { createItem, deleteItem, hasItemNamed, listItems } from '#lib/server/inventory.ts';
 import { PhotoError, photoToWebp } from '#lib/server/photo.ts';
-import { RecognitionError, recognizeItem } from '#lib/server/recognition.ts';
-import { itemFormValues, readItemForm } from '#lib/validation.ts';
+import { MOCK_RECOGNITION, RecognitionError, recognizeItem } from '#lib/server/recognition.ts';
+import { readItemForm } from '#lib/validation.ts';
+import { dev } from '$app/env';
 import { LLAMA_API_KEY, LLAMA_URL } from '$app/env/private';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -29,17 +30,17 @@ export const actions: Actions = {
 		requireUser(locals);
 		try {
 			const webp = await photoToWebp((await request.formData()).get('photo'));
-			const item = await recognizeItem(webp, { url: LLAMA_URL, apiKey: LLAMA_API_KEY });
+			// no LLAMA_URL in dev: a canned item, so the review below can be tried without the model device
+			const item =
+				dev && !LLAMA_URL ? MOCK_RECOGNITION : await recognizeItem(webp, { url: LLAMA_URL, apiKey: LLAMA_API_KEY });
 			if (!item) return { notRecognized: true };
-			// ponytail: the add form comes back prefilled for review; nothing is saved until "Išsaugoti".
-			// A per-attribute confirm/reject view and "Patvirtinti visus" (FR-21–23) are still to do.
-			const { confidence, ...fields } = item;
-			return { values: itemFormValues({ id: '', suitability: [], ...fields }), confidence };
+			// The page reviews it (FR-21–23). Nothing is saved until the user confirms; ?/create saves it.
+			return { recognized: item };
 		} catch (error) {
-			if (error instanceof PhotoError) return fail(400, { photoError: error.message });
+			if (error instanceof PhotoError) return fail(400, { photoError: error.message, retry: false }); // pick another
 			if (error instanceof RecognitionError) {
 				console.warn('Item recognition failed:', error.cause);
-				return fail(503, { photoError: error.message });
+				return fail(503, { photoError: error.message, retry: true }); // same photo may work next time
 			}
 			throw error;
 		}

@@ -69,6 +69,8 @@ docker compose exec app npm run check:recognition   # self-check: llama-server r
   against `node build`.
 - Hot reload on Windows needs file polling (`USE_POLLING=true`, already wired in `vite.config.ts`).
 - The llama.cpp server runs on a separate device. Set `LLAMA_URL` to its address (`http://host.docker.internal:8080` only if it runs on this machine).
+  With `LLAMA_URL` empty, dev answers every photo with a canned item (`MOCK_RECOGNITION`), so the UC-3 review works without the model.
+- A variable added to `src/env.ts` is only read when the dev server starts: `docker compose restart app` after adding one.
 - Photo uploads (UC-3): `src/lib/server/photo.ts` checks type/size by content and converts JPG/PNG/HEIC to a ≤ 1024 px WebP in memory
   (sharp; HEIC via `heic-decode`, because sharp's prebuilt binaries can't read it). Production needs `BODY_SIZE_LIMIT=11M` (adapter-node default is 512K).
 - There's no production Docker setup yet (dev only by decision). Production target: Linux, Node runtime, HTTPS 443, Mongo
@@ -150,7 +152,8 @@ FitnessLevel  = LOW | MEDIUM | HIGH   (UI: žemas / vidutinis / aukštas)
 | `/` | visitors | landing page; logged-in users are redirected to `/plan`; `/?deleted` shows "account deleted" |
 | `(auth)/login`, `(auth)/register` | visitors | UC-1 + UC-12 consent; logged-in users are redirected to `/plan` |
 | `(app)/plan` | logged in | trip planning (placeholder until UC-6) |
-| `(app)/inventory` | logged in | UC-2 add form (`?/create`, duplicate warning) + UC-4 list with search/filter/sort in the browser, delete with a `<dialog>` (`?/delete`) |
+| `(app)/inventory` | logged in | UC-2 add form (`?/create`, duplicate warning) + UC-3 photo (`?/recognize`, then a review of each attribute in the browser that saves through `?/create`) + UC-4 list with search/filter/sort in the browser, delete with a `<dialog>` (`?/delete`) |
+| `(app)/inventory/preview` | logged in | `POST` a photo, get the WebP back: preview for photos the browser can't show (HEIC outside Safari) |
 | `(app)/inventory/[id]` | logged in | UC-4 edit one item; someone else's id gets the same 404 as a missing one |
 | `(app)/questionnaire` | logged in | fitness questionnaire: answers + assigned level, editable (UC-5). **Not in the header nav**: reached from `/account` ("Užpildyti klausimyną" / "Keisti atsakymus"), and the "Paskyra" nav link stays highlighted on it (team decision 2026-11-23, keeps the nav short). Link to it wherever UC-5 is offered (UC-7 2b). |
 | `(app)/account` | logged in | email, fitness level + link to the questionnaire, "Ištrinti paskyrą" with a confirmation `<dialog>` (UC-9, action `?/delete`) |

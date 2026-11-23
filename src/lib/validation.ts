@@ -36,11 +36,14 @@ export const parseAttributes = (text: string) =>
 		return name.trim() ? [{ name: name.trim(), value: value.join(':').trim() }] : [];
 	});
 
-export const itemFormValues = (item: InventoryItem): ItemFormValues => ({
+/** One attribute as text: "spalva: ruda", or just "neperšlampamas" for a tag. parseAttributes reads it back. */
+export const attributeText = ({ name, value }: { name: string; value: string }) => (value ? `${name}: ${value}` : name);
+
+export const itemFormValues = (item: Omit<InventoryItem, 'id'>): ItemFormValues => ({
 	name: item.name,
 	category: item.category,
 	suitability: item.suitability,
-	attributes: item.attributes.map(({ name, value }) => (value ? `${name}: ${value}` : name)).join('\n')
+	attributes: item.attributes.map(attributeText).join('\n')
 });
 
 /** Reads a submitted item form. `input` is ready to save when `errors` is empty (FR-14). */

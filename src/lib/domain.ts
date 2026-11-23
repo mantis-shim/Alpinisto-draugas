@@ -50,6 +50,9 @@ export type InventoryItem = Required<Omit<ItemInput, 'attributes'>> & {
 /** Size limits for one item. The form, the schema and the <input> all use these; the inventory also goes into the LLM prompt. */
 export const ITEM_LIMITS = { name: 100, attributes: 30, attributeText: 100 } as const;
 
+/** FR-16. Checked in the browser (before a slow upload) and on the server. Production: BODY_SIZE_LIMIT in .env.example. */
+export const PHOTO_MAX_BYTES = 10 * 1024 * 1024;
+
 /** A photo-recognised item below this confidence (%) gets the "Patikrinkite" tag (UC-3). */
 export const RECOGNITION_CHECK_BELOW = 70;
 

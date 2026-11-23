@@ -1,5 +1,7 @@
-<!-- Inventory item fields (UC-2), shared by the add form and the edit page. Put inside a <form>. -->
+<!-- Inventory item fields (UC-2), shared by the add form and the edit page. Put inside a <form>.
+     `attributes` replaces the free-text attributes box (the photo review lists them one by one, UC-3). -->
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import {
 		CATEGORY_LABELS,
 		ITEM_CATEGORIES,
@@ -9,7 +11,8 @@
 	} from '#lib/domain.ts';
 	import type { ItemFormErrors, ItemFormValues } from '#lib/validation.ts';
 
-	let { values, errors }: { values: ItemFormValues; errors: ItemFormErrors } = $props();
+	let { values, errors, attributes }: { values: ItemFormValues; errors: ItemFormErrors; attributes?: Snippet } =
+		$props();
 
 	// FR-12: name suggestions while typing (native <datalist>, no JS)
 	const SUGGESTIONS = [
@@ -91,17 +94,21 @@
 	{/each}
 </fieldset>
 
-<div class="field">
-	<label for="item-attributes">Kiti požymiai</label>
-	<textarea
-		id="item-attributes"
-		name="attributes"
-		value={values.attributes}
-		aria-invalid={errors.attributes ? 'true' : undefined}
-		aria-describedby={errors.attributes ? 'item-attributes-hint item-attributes-error' : 'item-attributes-hint'}
-	></textarea>
-	<p class="field-hint" id="item-attributes-hint">
-		Kiekvienas požymis naujoje eilutėje, pvz., „spalva: ruda“ arba „neperšlampamas“. Neprivaloma.
-	</p>
-	{#if errors.attributes}<p class="field-error" id="item-attributes-error">{errors.attributes}</p>{/if}
-</div>
+{#if attributes}
+	{@render attributes()}
+{:else}
+	<div class="field">
+		<label for="item-attributes">Kiti požymiai</label>
+		<textarea
+			id="item-attributes"
+			name="attributes"
+			value={values.attributes}
+			aria-invalid={errors.attributes ? 'true' : undefined}
+			aria-describedby={errors.attributes ? 'item-attributes-hint item-attributes-error' : 'item-attributes-hint'}
+		></textarea>
+		<p class="field-hint" id="item-attributes-hint">
+			Kiekvienas požymis naujoje eilutėje, pvz., „spalva: ruda“ arba „neperšlampamas“. Neprivaloma.
+		</p>
+		{#if errors.attributes}<p class="field-error" id="item-attributes-error">{errors.attributes}</p>{/if}
+	</div>
+{/if}
