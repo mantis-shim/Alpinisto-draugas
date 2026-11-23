@@ -38,7 +38,7 @@ Users: individual hikers, no IT skills assumed, often on a phone with a slow con
 | Server | `@sveltejs/adapter-node` on Node 24 | Linux in production |
 | Database | MongoDB 8 + Mongoose 9 | Document model: **no foreign keys, no joins**. Embed, or link by `userId`. |
 | External LLM | Anthropic API, `@anthropic-ai/sdk` (not installed yet), model `claude-opus-5-5` | Generates recommendations (UC-7). See **LLM notes**. |
-| Local vision model | llama.cpp `llama-server`, OpenAI-compatible HTTP API at `LLAMA_URL` | Recognises items in photos (UC-3). Runs **outside Docker** on the host. Photos never go to third parties. |
+| Local vision model | llama.cpp `llama-server`, OpenAI-compatible HTTP API at `LLAMA_URL` | Recognises items in photos (UC-3). Runs on a **separate team device** reached over the network, not in Docker. Photos never go to third parties. |
 | Lint | ESLint (`npm run lint`) | Must pass |
 | Weather | **No weather API** (team decision) | The LLM estimates typical conditions from location + dates. The UI must say the weather info is an estimate. |
 
@@ -54,6 +54,8 @@ npm run check:auth            # self-check: password hashing + registration rule
 docker compose exec app npm run check:inventory   # self-check: inventory CRUD + item form rules against the dev DB (cleans up after itself)
 npm ci                        # on the host too: the container's node_modules is a separate volume, so the editor needs its own copy for types
 npm run check:fitness         # self-check: questionnaire validation + fitness level formula (plain Node, no DB)
+docker compose exec app npm run check:photo         # self-check: photo upload rules + WebP conversion (no DB)
+docker compose exec app npm run check:recognition   # self-check: llama-server request, answer checks, error messages (fetch stubbed)
 ```
 
 - The app container runs `npm install` on every start, so deps stay in sync with `package.json`.
@@ -66,7 +68,9 @@ npm run check:fitness         # self-check: questionnaire validation + fitness l
 - SvelteKit's CSRF origin check runs **only in production builds** (it's off in `vite dev`). Test cross-site behaviour
   against `node build`.
 - Hot reload on Windows needs file polling (`USE_POLLING=true`, already wired in `vite.config.ts`).
-- The local llama.cpp server is started separately on the host, and the app reaches it at `http://host.docker.internal:8080`.
+- The llama.cpp server runs on a separate device. Set `LLAMA_URL` to its address (`http://host.docker.internal:8080` only if it runs on this machine).
+- Photo uploads (UC-3): `src/lib/server/photo.ts` checks type/size by content and converts JPG/PNG/HEIC to a ≤ 1024 px WebP in memory
+  (sharp; HEIC via `heic-decode`, because sharp's prebuilt binaries can't read it). Production needs `BODY_SIZE_LIMIT=11M` (adapter-node default is 512K).
 - There's no production Docker setup yet (dev only by decision). Production target: Linux, Node runtime, HTTPS 443, Mongo
   and llama.cpp in an internal network.
 
@@ -177,6 +181,7 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 - Show a preview before sending, and let the user replace the photo. If gallery permission is missing, explain how to grant it.
 - Send it to the local model, which returns name, category, attributes (e.g. colour, material, weight, or tags such as
   `neperšlampamas`, `sunkus`, `apsaugo_nuo_uodų`) and a confidence %. **Result within 10 s** (NŠ-1).
+  **Decided (team, 2026-11-23): wait up to 30 s** (`RECOGNITION_TIMEOUT_MS` in `src/lib/server/recognition.ts`), because the local model is slower.
 - Confidence < 70 %: tag the item "Patikrinkite".
 - Not recognised: tip "photograph in a bright place, one item per frame" and offer manual add (UC-2 form).
 - Show attributes next to the photo. Each attribute can be **confirmed / edited / rejected**, the name is editable, and there's a

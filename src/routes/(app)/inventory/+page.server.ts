@@ -1,7 +1,10 @@
 import { fail } from '@sveltejs/kit';
 import { requireUser } from '#lib/server/auth.ts';
 import { createItem, deleteItem, hasItemNamed, listItems } from '#lib/server/inventory.ts';
-import { readItemForm } from '#lib/validation.ts';
+import { PhotoError, photoToWebp } from '#lib/server/photo.ts';
+import { RecognitionError, recognizeItem } from '#lib/server/recognition.ts';
+import { itemFormValues, readItemForm } from '#lib/validation.ts';
+import { LLAMA_API_KEY, LLAMA_URL } from '$app/env/private';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => ({ items: await listItems(requireUser(locals).id) });
@@ -19,6 +22,27 @@ export const actions: Actions = {
 		}
 		const item = await createItem(user.id, input);
 		return { created: item.name };
+	},
+
+	// UC-3: recognise an item from a photo
+	recognize: async ({ locals, request }) => {
+		requireUser(locals);
+		try {
+			const webp = await photoToWebp((await request.formData()).get('photo'));
+			const item = await recognizeItem(webp, { url: LLAMA_URL, apiKey: LLAMA_API_KEY });
+			if (!item) return { notRecognized: true };
+			// ponytail: the add form comes back prefilled for review; nothing is saved until "Išsaugoti".
+			// A per-attribute confirm/reject view and "Patvirtinti visus" (FR-21–23) are still to do.
+			const { confidence, ...fields } = item;
+			return { values: itemFormValues({ id: '', suitability: [], ...fields }), confidence };
+		} catch (error) {
+			if (error instanceof PhotoError) return fail(400, { photoError: error.message });
+			if (error instanceof RecognitionError) {
+				console.warn('Item recognition failed:', error.cause);
+				return fail(503, { photoError: error.message });
+			}
+			throw error;
+		}
 	},
 
 	delete: async ({ locals, request }) => {

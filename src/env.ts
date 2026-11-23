@@ -9,5 +9,14 @@ export const variables = defineEnvVars({
 			if (!value) throw new Error('MONGODB_URI is not set (see .env.example)');
 			return value;
 		}
+	},
+	// Optional, so the app starts without the model; recognising a photo then shows an error (UC-3).
+	LLAMA_URL: {
+		description: 'llama-server (OpenAI-compatible API) on the separate model device, e.g. http://192.168.1.50:8080',
+		schema: (value) => value || undefined
+	},
+	LLAMA_API_KEY: {
+		description: "llama-server's --api-key. Required whenever llama-server is reachable over a network.",
+		schema: (value) => value || undefined
 	}
 });

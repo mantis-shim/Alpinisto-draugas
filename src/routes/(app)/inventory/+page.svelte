@@ -2,7 +2,13 @@
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import ItemFields from '#lib/components/ItemFields.svelte';
-	import { CATEGORY_LABELS, ITEM_CATEGORIES, TEMPERATURE_LABELS, type InventoryItem } from '#lib/domain.ts';
+	import {
+		CATEGORY_LABELS,
+		ITEM_CATEGORIES,
+		RECOGNITION_CHECK_BELOW,
+		TEMPERATURE_LABELS,
+		type InventoryItem
+	} from '#lib/domain.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -11,7 +17,8 @@
 
 	const emptyValues = { name: '', category: '', suitability: [], attributes: '' };
 	// open while the inventory is empty or the last submit needs fixing
-	const addOpen = $derived(data.items.length === 0 || !!form?.values);
+	const addOpen = $derived(data.items.length === 0 || !!(form?.values || form?.photoError || form?.notRecognized));
+	let recognizing = $state(false); // the model can take up to 30 s
 
 	// FR-27: search, filter and sort in the browser, so a slow connection costs no extra requests
 	let query = $state('');
@@ -46,8 +53,52 @@
 
 <details open={addOpen}>
 	<summary>Pridėti daiktą</summary>
+	<!-- UC-3: one photo; the server checks type and size and converts it -->
+	<form
+		method="POST"
+		action="?/recognize"
+		enctype="multipart/form-data"
+		novalidate
+		use:enhance={() => {
+			recognizing = true;
+			return async ({ update }) => {
+				await update();
+				recognizing = false;
+			};
+		}}
+	>
+		{#if form?.notRecognized}
+			<p class="notice notice-warning" role="status">
+				Daikto atpažinti nepavyko. Fotografuok šviesioje vietoje, po vieną daiktą kadre, arba pridėk daiktą
+				ranka žemiau.
+			</p>
+		{/if}
+		<div class="field">
+			<label for="item-photo">Įkelti iš galerijos</label>
+			<input
+				id="item-photo"
+				name="photo"
+				type="file"
+				accept="image/jpeg,image/png,image/heic,image/heif,.heic,.heif"
+				aria-invalid={form?.photoError ? 'true' : undefined}
+				aria-describedby={form?.photoError ? 'item-photo-hint item-photo-error' : 'item-photo-hint'}
+			/>
+			<p class="field-hint" id="item-photo-hint">JPG, PNG arba HEIC iki 10 MB. Vienoje nuotraukoje – vienas daiktas.</p>
+			{#if form?.photoError}<p class="field-error" id="item-photo-error">{form.photoError}</p>{/if}
+		</div>
+		<button class="button-secondary" disabled={recognizing}>
+			{#if recognizing}<span class="spinner" aria-hidden="true"></span> Atpažįstama…{:else}Atpažinti{/if}
+		</button>
+	</form>
+
 	<!-- novalidate: the server checks everything and answers in Lithuanian -->
 	<form id="add-item" method="POST" action="?/create" novalidate use:enhance>
+		{#if form?.confidence !== undefined}
+			<p class="notice" role="status">
+				Daiktą atpažino dirbtinis intelektas (tikrumas {form.confidence} %). Patikrink laukus ir išsaugok.
+				{#if form.confidence < RECOGNITION_CHECK_BELOW}<span class="tag tag-warning">Patikrinkite</span>{/if}
+			</p>
+		{/if}
 		{#if form?.duplicate}
 			<p class="notice notice-warning" role="alert">
 				Daiktas „{form.values.name}“ inventoriuje jau yra. Vis tiek pridėti dar vieną?
