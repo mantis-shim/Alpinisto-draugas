@@ -1,8 +1,16 @@
 import { redirect } from '@sveltejs/kit';
 import { resolve } from '$app/paths';
+import type { FitnessLevel } from '#lib/domain.ts';
 import { endSession, requireUser } from '#lib/server/auth.ts';
 import { Hike, Item, Session, User } from '#lib/server/models.ts';
-import type { Actions } from './$types';
+import type { Actions, PageServerLoad } from './$types';
+
+// The account page shows the fitness level and links to the questionnaire (UC-5).
+export const load: PageServerLoad = async ({ locals }) => {
+	const { id } = requireUser(locals);
+	const user = await User.findById(id, 'fitnessAssessment.level').lean();
+	return { fitnessLevel: (user?.fitnessAssessment?.level as FitnessLevel | undefined) ?? null };
+};
 
 export const actions: Actions = {
 	// UC-9: delete the account and everything that belongs to it (FR-54). No DB cascade, so list it all here.

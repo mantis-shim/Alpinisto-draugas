@@ -51,6 +51,7 @@ docker compose exec app npm install <pkg>   # add a dependency (updates package.
 docker compose exec app npm run db:seed     # demo user demo@example.com / Demo1234 (re-runnable)
 docker compose down -v        # stop and wipe DB + container node_modules
 npm run check:auth            # self-check: password hashing + registration rules (plain Node, no DB)
+npm run check:fitness         # self-check: questionnaire validation + fitness level formula (plain Node, no DB)
 ```
 
 - The app container runs `npm install` on every start, so deps stay in sync with `package.json`.
@@ -143,7 +144,8 @@ FitnessLevel  = LOW | MEDIUM | HIGH   (UI: žemas / vidutinis / aukštas)
 | `/` | visitors | landing page; logged-in users are redirected to `/plan`; `/?deleted` shows "account deleted" |
 | `(auth)/login`, `(auth)/register` | visitors | UC-1 + UC-12 consent; logged-in users are redirected to `/plan` |
 | `(app)/plan` | logged in | trip planning (placeholder until UC-6) |
-| `(app)/account` | logged in | email + "Ištrinti paskyrą" with a confirmation `<dialog>` (UC-9, action `?/delete`) |
+| `(app)/questionnaire` | logged in | fitness questionnaire: answers + assigned level, editable (UC-5). **Not in the header nav**: reached from `/account` ("Užpildyti klausimyną" / "Keisti atsakymus"), and the "Paskyra" nav link stays highlighted on it (team decision 2026-11-23, keeps the nav short). Link to it wherever UC-5 is offered (UC-7 2b). |
+| `(app)/account` | logged in | email, fitness level + link to the questionnaire, "Ištrinti paskyrą" with a confirmation `<dialog>` (UC-9, action `?/delete`) |
 | `/logout` | logged in | `POST` only (a form button in the app header) |
 
 The `(app)` layout guards its pages and shows the header nav. Put new logged-in pages under `src/routes/(app)/`.
@@ -190,6 +192,10 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 - All answers required. Unanswered questions are highlighted and the form can't be submitted.
 - The backend (not the AI) assigns the level žemas / vidutinis / aukštas and shows it.
 - The user can view and change answers later, and the level is recalculated.
+- **Decided (team, 2026-11-23): two questions only**, stored as `fitnessAssessment.averageDailySteps` and `hikesLast3Years`
+  (whole numbers ≥ 0; upper bounds 100 000 / 1 000 only catch typos). Each answer gives 0–2 points:
+  steps < 5 000 → 0, 5 000–9 999 → 1, ≥ 10 000 → 2; hikes 0 → 0, 1–2 → 1, ≥ 3 → 2.
+  Sum 0–1 → LOW, 2–3 → MEDIUM, 4 → HIGH. Rules and formula live in `src/lib/fitness.ts` (the page explains them too).
 
 ### UC-6 Trip details (US-7, US-8, Upyna, S2) FR-35–38
 - Location as free text, required (error if missing), changeable before generating.
@@ -311,12 +317,11 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 
 ## Open decisions (not in the spec — decide, then record the answer here)
 
-1. **Questionnaire**: exact questions and the scoring formula for žemas/vidutinis/aukštas.
-2. **"Far" departure date** threshold for the weather warning.
-3. **Local vision model**: which multimodal GGUF for llama.cpp, and a prompt that returns JSON (name, category, attributes, confidence).
-4. **PDF library** (must keep output ≤ 1 MB).
-5. **Spec conflict**: UC-12's privacy text lists item photos as sent to the external AI, but the architecture keeps photos
+1. **"Far" departure date** threshold for the weather warning.
+2. **Local vision model**: which multimodal GGUF for llama.cpp, and a prompt that returns JSON (name, category, attributes, confidence).
+3. **PDF library** (must keep output ≤ 1 MB).
+4. **Spec conflict**: UC-12's privacy text lists item photos as sent to the external AI, but the architecture keeps photos
    on the local model. The registration text already follows the architecture.
-6. **Not built yet from UC-12**: withdrawing consent in account settings (FR-10), and making users re-accept when
+5. **Not built yet from UC-12**: withdrawing consent in account settings (FR-10), and making users re-accept when
    `PRIVACY_POLICY_VERSION` changes (sequence diagram 18). Both are needed before the AI features (UC-3, UC-7) send any data.
-7. **Login rate limiting / lockout** is not in the spec and not built.
+6. **Login rate limiting / lockout** is not in the spec and not built.
