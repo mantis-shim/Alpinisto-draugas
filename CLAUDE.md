@@ -52,6 +52,7 @@ docker compose exec app npm run db:seed     # demo user demo@example.com / Demo1
 docker compose down -v        # stop and wipe DB + container node_modules
 npm run check:auth            # self-check: password hashing + registration rules (plain Node, no DB)
 docker compose exec app npm run check:inventory   # self-check: inventory CRUD + item form rules against the dev DB (cleans up after itself)
+npm run check:trip            # self-check: trip form rules, duration, season, far-date warning (plain Node, no DB)
 npm ci                        # on the host too: the container's node_modules is a separate volume, so the editor needs its own copy for types
 npm run check:fitness         # self-check: questionnaire validation + fitness level formula (plain Node, no DB)
 docker compose exec app npm run check:photo         # self-check: photo upload rules + WebP preview + HEIC -> PNG for the model (no DB)
@@ -159,7 +160,7 @@ FitnessLevel  = LOW | MEDIUM | HIGH   (UI: žemas / vidutinis / aukštas)
 |---|---|---|
 | `/` | visitors | landing page; logged-in users are redirected to `/plan`; `/?deleted` shows "account deleted" |
 | `(auth)/login`, `(auth)/register` | visitors | UC-1 + UC-12 consent; logged-in users are redirected to `/plan` |
-| `(app)/plan` | logged in | trip planning (placeholder until UC-6) |
+| `(app)/plan` | logged in | UC-6: the open trip's summary ("Keisti", disabled "Generuoti rekomendacijas"), or the trip form (`?/save`) when there is none |
 | `(app)/inventory` | logged in | bright "Pridėti daiktą" button opens a `<dialog>`: UC-2 text form (`?/create`, duplicate warning) with "Pridėti iš nuotraukos" beside it (UC-3 `?/recognize` → "Generuoti" pre-fills the same text form; "Generuoti iš naujo" beside the photo sends `regenerate`) + UC-4 list with search/filter/sort in the browser, delete with a `<dialog>` (`?/delete`) |
 | `(app)/inventory/preview` | logged in | `POST` a photo, get the WebP back: preview for photos the browser can't show (HEIC outside Safari) |
 | `(app)/inventory/[id]` | logged in | UC-4 edit one item; someone else's id gets the same 404 as a missing one |
@@ -242,6 +243,18 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 - Departure and return dates (`YYYY-MM-DD`). Departure ≥ today, return ≥ departure, clear error otherwise.
 - Departure date far away: warn that the weather estimate may be inaccurate and may change.
 - The backend computes duration (days) and season from the dates, saves the trip, and shows a summary with a "Generuoti rekomendacijas" button.
+- **Decided (team, 2026-11-23)**. Rules live in `src/lib/trip.ts`, DB access in `src/lib/server/trips.ts`:
+  - "Far" departure date: more than 10 days from today → show the warning that the weather estimate may be inaccurate
+    and may change (reliable forecasts reach ~7–10 days). "Today" is the date in Europe/Vilnius.
+  - Season from the departure month: Dec–Feb WINTER, Mar–May SPRING, Jun–Aug SUMMER, Sep–Nov AUTUMN.
+  - Duration counts both ends: a one-day hike is 1 day.
+  - Location: max 200 characters.
+  - A user has **at most one open trip** (a hike without `plan`). "Išsaugoti" saves it and `/plan` shows its summary
+    (location, dates, duration, season, far-date warning) with "Keisti" (back to the filled form, updates the same trip)
+    and "Generuoti rekomendacijas". With no open trip, `/plan` shows an empty form. Trips with `plan` belong to the
+    trip history (UC-11) and are never edited.
+  - "Generuoti rekomendacijas" is disabled with the note "Rekomendacijų generavimas dar kuriamas." until UC-7 is built.
+    UC-7 enables it and generates the plan for the open trip, which then moves to the history.
 
 ### UC-7 Generate recommendations (US-3, 15–20; Vincentas, Naglis, Danielius, S2) FR-39–48
 - Needs consent (UC-12). Collect trip details, fitness level and inventory into **one** LLM request, with a loading indicator while it runs.
@@ -354,7 +367,8 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 - Git: **everything has to be committed**. Don't leave work uncommitted.
   - Work on `feature/{feature_name}` branches created from `develop`. When the feature is done, merge it into `develop`.
   - Code reaches `main` only via a reviewed pull request from `develop`.
-  - The `develop` branch doesn't exist yet. Create it from `main` first.
+  - **No AI attribution in git**: no `Co-Authored-By: Claude …` trailer and no "Generated with Claude Code" line in
+    commit messages, merge commits or pull request descriptions.
 - Never commit secrets. New env vars go into `.env.example` without values.
 
 ## Open decisions (not in the spec — decide, then record the answer here)
@@ -368,6 +382,6 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 3. **PDF library** (must keep output ≤ 1 MB).
 4. **Spec conflict**: UC-12's privacy text lists item photos as sent to the external AI, but the architecture keeps photos
    on the local model. The registration text already follows the architecture.
-5. **Not built yet from UC-12**: withdrawing consent in account settings (FR-10), and making users re-accept when
+4. **Not built yet from UC-12**: withdrawing consent in account settings (FR-10), and making users re-accept when
    `PRIVACY_POLICY_VERSION` changes (sequence diagram 18). Both are needed before the AI features (UC-3, UC-7) send any data.
-6. **Login rate limiting / lockout** is not in the spec and not built.
+5. **Login rate limiting / lockout** is not in the spec and not built.

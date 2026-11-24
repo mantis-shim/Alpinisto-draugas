@@ -20,7 +20,8 @@
 		"check:fitness": "node scripts/check-fitness.ts",
 		"check:photo": "node scripts/check-photo.ts",
 		"check:recognition": "node scripts/check-recognition.ts",
-		"check:inventory": "node --env-file-if-exists=.env scripts/check-inventory.ts"
+		"check:inventory": "node --env-file-if-exists=.env scripts/check-inventory.ts",
+		"check:trip": "node scripts/check-trip.ts"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",
