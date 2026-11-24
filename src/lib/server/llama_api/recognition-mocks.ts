@@ -1,6 +1,6 @@
 // Canned model replies for UC-3, one per branch of the recognition flow, so it works and is tested without llama-server.
 // The app plays one with RECOGNITION_MOCK=<scenario> (src/env.ts); scripts/check-recognition.ts tests the same objects.
-import { ModelUnavailable, type ModelAnswer, type RecognitionModel } from '#lib/server/recognition.ts';
+import { ModelUnavailable, type ModelAnswer, type RecognitionModel } from '#lib/server/llama_api/recognition.ts';
 
 /** One reply: the model's answer, raw text that isn't a valid answer, or the error the call fails with. */
 type MockResponse = ModelAnswer | string | Error;

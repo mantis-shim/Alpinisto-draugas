@@ -1,11 +1,10 @@
-// UC-3 step 1: an uploaded photo becomes a small WebP for the item recognition model.
+// UC-3 step 1: check an uploaded photo; convert it to a small WebP for the browser preview.
 // Everything happens in memory: the photo is never written to disk or the database (FR-25).
 import decodeHeic from 'heic-decode';
 import sharp from 'sharp';
 import { PHOTO_MAX_BYTES } from '#lib/domain.ts';
 
-// ponytail: 1024 px on the long side is enough to tell what an item is. Vision models downscale anyway, and fewer
-// pixels mean fewer image tokens and a faster answer (10 s budget, NŠ-1). Raise it if small print (labels) matters.
+// ponytail: 1024 px on the long side is enough to see what an item is, and it keeps the preview light on slow networks.
 const MAX_SIDE = 1024;
 // HEIC is decoded to raw pixels (4 bytes each) before sharp sees it. This caps what one upload can make us allocate (~400 MB).
 const HEIC_MAX_PIXELS = 100_000_000;
@@ -37,16 +36,24 @@ async function heicToSharp(bytes: Uint8Array) {
 	}
 }
 
-/**
- * Checks one uploaded photo (JPG, PNG or HEIC, at most 10 MB, FR-16) and returns it as WebP: upright,
- * at most MAX_SIDE px, without metadata (no GPS location leaves the server). Throws PhotoError.
- */
-export async function photoToWebp(file: FormDataEntryValue | null) {
+/** Checks one uploaded photo (JPG, PNG or HEIC, at most 10 MB, FR-16) and returns its bytes as sent. Throws PhotoError. */
+export async function readPhoto(file: FormDataEntryValue | null) {
 	if (!(file instanceof File) || !file.size) throw new PhotoError('Pasirink nuotrauką.');
 	if (file.size > PHOTO_MAX_BYTES) throw new PhotoError('Nuotrauka per didelė. Įkelk nuotrauką iki 10 MB.');
 	const bytes = new Uint8Array(await file.arrayBuffer());
 	const format = detectFormat(bytes);
 	if (!format) throw new PhotoError('Tokio formato nuotraukos įkelti negalima. Tinka JPG, PNG arba HEIC.');
+	return { bytes, format };
+}
+
+export type Photo = Awaited<ReturnType<typeof readPhoto>>;
+
+/**
+ * readPhoto, then the photo as WebP: upright, at most MAX_SIDE px, without metadata (no GPS location leaves the server).
+ * Only the browser preview uses it now: llama-server can't read WebP. Throws PhotoError.
+ */
+export async function photoToWebp(file: FormDataEntryValue | null) {
+	const { bytes, format } = await readPhoto(file);
 	try {
 		const image = format === 'heic' ? await heicToSharp(bytes) : sharp(bytes);
 		return await image

@@ -1,9 +1,11 @@
 // UC-3 step 2: ask the vision model what item is in the photo (FR-19), then check its answer.
 // The real model is llama-server (OpenAI-compatible API) on a separate team device (LLAMA_URL); the photo goes only
 // there, never to a third party. recognition-mocks.ts plays canned answers through the same seam (RecognitionModel).
+// The photo goes as uploaded (JPG/PNG): llama-server's image loader (stb_image) can't read WebP.
 // No `$app/env` import here: the caller passes the config, so scripts/check-recognition.ts runs this with plain Node.
 import { ITEM_CATEGORIES, ITEM_LIMITS, type ItemCategory } from '#lib/domain.ts';
 import { attributeName, attributeValue } from '#lib/validation.ts';
+import type { Photo } from '#lib/server/photo.ts';
 
 /** Team decision 2026-11-23: wait up to 30 s, not the spec's 10 s (NŠ-1). The local model needs longer. */
 export const RECOGNITION_TIMEOUT_MS = 30_000;
@@ -21,11 +23,11 @@ export type ModelAnswer = {
 export type RecognizedItem = Omit<ModelAnswer, 'recognized'>;
 
 /**
- * The one seam between the app and the model: the WebP photo in, the model's raw answer (ModelAnswer as JSON text) out.
+ * The one seam between the app and the model: the photo in, the model's raw answer (ModelAnswer as JSON text) out.
  * llamaModel is the real one, mockModel (recognition-mocks.ts) the stand-in. Throws ModelUnavailable when the model
  * can't be reached (retried), a TimeoutError DOMException, or any other error (not retried).
  */
-export type RecognitionModel = (webp: Uint8Array) => Promise<string>;
+export type RecognitionModel = (photo: Photo) => Promise<string>;
 
 /** The model device can't be reached or is busy (network error, HTTP 5xx). Worth one more try. */
 export class ModelUnavailable extends Error {}
@@ -69,13 +71,13 @@ const SCHEMA = {
 };
 
 /** POST /v1/chat/completions body (OpenAI format). The schema becomes a grammar in llama-server, so the reply is JSON. */
-export const recognitionRequest = (webp: Uint8Array) => ({
+export const recognitionRequest = ({ bytes, format }: Photo) => ({
 	messages: [
 		{ role: 'system', content: PROMPT },
 		{
 			role: 'user',
 			content: [
-				{ type: 'image_url', image_url: { url: `data:image/webp;base64,${Buffer.from(webp).toString('base64')}` } },
+				{ type: 'image_url', image_url: { url: `data:image/${format};base64,${Buffer.from(bytes).toString('base64')}` } },
 				{ type: 'text', text: 'Koks daiktas šioje nuotraukoje?' }
 			]
 		}
@@ -116,14 +118,14 @@ export function parseRecognition(content: string): RecognizedItem | null {
 /** The real model: llama-server on the model device. */
 export const llamaModel =
 	(llama: { url?: string; apiKey?: string }): RecognitionModel =>
-	async (webp) => {
+	async (photo) => {
 		if (!llama.url) throw new Error('LLAMA_URL is not set');
 		let response;
 		try {
 			response = await fetch(`${llama.url.replace(/\/+$/, '')}/v1/chat/completions`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json', ...(llama.apiKey && { authorization: `Bearer ${llama.apiKey}` }) },
-				body: JSON.stringify(recognitionRequest(webp)),
+				body: JSON.stringify(recognitionRequest(photo)),
 				signal: AbortSignal.timeout(RECOGNITION_TIMEOUT_MS) // covers reading the body too
 			});
 		} catch (error) {
@@ -142,12 +144,12 @@ export const llamaModel =
 		return choice.message.content;
 	};
 
-/** Asks the model what item is in the WebP photo. Null if it can't tell (FR-21). Throws RecognitionError. */
-export async function recognizeItem(webp: Uint8Array, model: RecognitionModel): Promise<RecognizedItem | null> {
+/** Asks the model what item is in the photo. Null if it can't tell (FR-21). Throws RecognitionError. */
+export async function recognizeItem(photo: Photo, model: RecognitionModel): Promise<RecognizedItem | null> {
 	for (let attempt = 1; ; attempt++) {
 		let content;
 		try {
-			content = await model(webp);
+			content = await model(photo);
 		} catch (error) {
 			// ponytail: retries at once, which covers a dropped connection. Add a short wait if the device often answers 503.
 			if (error instanceof ModelUnavailable && attempt < MAX_ATTEMPTS) continue;

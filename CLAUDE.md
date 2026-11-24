@@ -69,12 +69,14 @@ docker compose exec app npm run check:recognition   # self-check: llama-server r
   against `node build`.
 - Hot reload on Windows needs file polling (`USE_POLLING=true`, already wired in `vite.config.ts`).
 - The llama.cpp server runs on a separate device. Set `LLAMA_URL` to its address (`http://host.docker.internal:8080` only if it runs on this machine).
-  Without the model, set `RECOGNITION_MOCK=<scenario>` (`src/lib/server/recognition-mocks.ts`, one per branch of the
+  Without the model, set `RECOGNITION_MOCK=<scenario>` (`src/lib/server/llama_api/recognition-mocks.ts`, one per branch of the
   UC-3 flow; `check:recognition` tests the same ones).
-  The model sits behind `RecognitionModel` (`src/lib/server/recognition.ts`): `llamaModel` is the real one, `mockModel` the stand-in.
+  The model sits behind `RecognitionModel` (`src/lib/server/llama_api/recognition.ts`): `llamaModel` is the real one, `mockModel` the stand-in.
 - A variable added to `src/env.ts` is only read when the dev server starts: `docker compose restart app` after adding one.
-- Photo uploads (UC-3): `src/lib/server/photo.ts` checks type/size by content and converts JPG/PNG/HEIC to a ≤ 1024 px WebP in memory
-  (sharp; HEIC via `heic-decode`, because sharp's prebuilt binaries can't read it). Production needs `BODY_SIZE_LIMIT=11M` (adapter-node default is 512K).
+- Photo uploads (UC-3): `src/lib/server/photo.ts` checks type/size by content (`readPhoto`). `photoToWebp` converts JPG/PNG/HEIC
+  to a ≤ 1024 px WebP in memory for the browser preview only (sharp; HEIC via `heic-decode`, because sharp's prebuilt binaries can't read it).
+  **llama-server can't read WebP**, so recognition sends JPG/PNG as uploaded and refuses HEIC for now (conversion call commented out in
+  the `?/recognize` action). Production needs `BODY_SIZE_LIMIT=11M` (adapter-node default is 512K).
 - There's no production Docker setup yet (dev only by decision). Production target: Linux, Node runtime, HTTPS 443, Mongo
   and llama.cpp in an internal network.
 
@@ -192,7 +194,7 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 - Show a preview before sending, and let the user replace the photo. If gallery permission is missing, explain how to grant it.
 - Send it to the local model, which returns name, category, attributes (e.g. colour, material, weight, or tags such as
   `neperšlampamas`, `sunkus`, `apsaugo_nuo_uodų`) and a confidence %. **Result within 10 s** (NŠ-1).
-  **Decided (team, 2026-11-23): wait up to 30 s** (`RECOGNITION_TIMEOUT_MS` in `src/lib/server/recognition.ts`), because the local model is slower.
+  **Decided (team, 2026-11-23): wait up to 30 s** (`RECOGNITION_TIMEOUT_MS` in `src/lib/server/llama_api/recognition.ts`), because the local model is slower.
   An unreachable or busy model device (network error, HTTP 5xx) is retried once automatically. A timeout or a broken answer
   isn't (another 30 s, same answer): the user gets "Bandyti dar kartą".
 - Confidence < 70 %: tag the item "Patikrinkite".
@@ -203,7 +205,7 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
   per tag, removable, new ones via "Pridėti požymį") next to the photo, with the confidence and "Patikrinkite". "Išsaugoti" confirms it,
   "Atšaukti" (closing the popup) rejects it and saves nothing.
 - Photos are processed and discarded, **never stored**.
-- HEIC: most browsers can't render it in `<img>`, so convert it before preview or model input.
+- HEIC: most browsers can't render it in `<img>`, so convert it before preview or model input (model input: not yet, see Running).
 
 ### UC-4 View & manage inventory (US-10 Mantas, US-14 Naglis, S1) FR-26–30
 - List all items with name, category and suitability tags. Sort by name, filter by category, search by name.
@@ -346,7 +348,8 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 ## Open decisions (not in the spec — decide, then record the answer here)
 
 1. **"Far" departure date** threshold for the weather warning.
-2. **Local vision model**: which multimodal GGUF for llama.cpp, and a prompt that returns JSON (name, category, attributes, confidence).
+2. **Local vision model**: runs `ggml-org/Qwen2.5-VL-3B-Instruct-GGUF` (llama-server at `LLAMA_URL`, API key `LLAMA_API_KEY`).
+   Prompt + JSON schema in `src/lib/server/llama_api/recognition.ts`. Still open: model choice final? HEIC/large photos (see Running).
 3. **PDF library** (must keep output ≤ 1 MB).
 4. **Spec conflict**: UC-12's privacy text lists item photos as sent to the external AI, but the architecture keeps photos
    on the local model. The registration text already follows the architecture.

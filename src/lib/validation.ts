@@ -33,7 +33,7 @@ export type ItemFormErrors = { name?: string; category?: string; attributes?: st
 export const parseAttributes = (text: string) =>
 	text.split('\n').flatMap((line) => {
 		const [name, ...value] = line.split(':'); // only the first ":" separates, so "10:30" survives
-		return name.trim() ? [{ name: name.trim(), value: value.join(':').trim() }] : [];
+		return name.trim() ? [{ name: name.trim(), value: attributeValue(value.join(':')) }] : [];
 	});
 
 /** One attribute as text: "spalva: ruda", or just "neperšlampamas" for a tag. parseAttributes reads it back. */
@@ -60,11 +60,14 @@ export const fold = (text: string) => text.normalize('NFD').replace(/\p{M}/gu, '
 /** An attribute name attributeText can write safely: a ":" in it would split it wrongly when read back. */
 export const attributeName = (name: string) => name.replaceAll(':', '').trim();
 
+/** A tag without a value means "taip", so a bare yes ("taip", "true", "yes") is stored as '' and shows as the plain tag. */
+export const attributeValue = (value: string) => (/^(taip|true|yes)$/i.test(value.trim()) ? '' : value.trim());
+
 /** The tag typed into "Požymis" + "Reikšmė". A value without a name becomes a plain tag; null when both are empty. */
 export function typedAttribute(name: string, value: string) {
 	const cleanName = attributeName(name);
 	const cleanValue = value.trim();
-	if (cleanName) return { name: cleanName, value: cleanValue };
+	if (cleanName) return { name: cleanName, value: attributeValue(cleanValue) };
 	return cleanValue ? { name: attributeName(cleanValue), value: '' } : null;
 }
 

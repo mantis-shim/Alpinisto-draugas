@@ -1,5 +1,5 @@
 # Dev environment: SvelteKit (Vite hot reload) + MongoDB.
-# The local llama.cpp model is NOT here; it runs on the host (see LLAMA_URL in .env.example).
+# The local llama.cpp model is NOT here; it runs on a separate team device (LLAMA_URL in .env).
 services:
   app:
     image: node:24-alpine

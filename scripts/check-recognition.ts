@@ -4,7 +4,7 @@
 // Test against a real llama-server by hand.
 import assert from 'node:assert/strict';
 import { ITEM_CATEGORIES, RECOGNITION_CHECK_BELOW } from '#lib/domain.ts';
-import { MOCK_RESPONSES, isMockScenario, mockModel, type MockScenario } from '#lib/server/recognition-mocks.ts';
+import { MOCK_RESPONSES, isMockScenario, mockModel, type MockScenario } from '#lib/server/llama_api/recognition-mocks.ts';
 import {
 	MAX_ATTEMPTS,
 	RECOGNITION_TIMEOUT_MS,
@@ -13,17 +13,19 @@ import {
 	parseRecognition,
 	recognitionRequest,
 	recognizeItem
-} from '#lib/server/recognition.ts';
+} from '#lib/server/llama_api/recognition.ts';
 import { itemFormValues, readItemForm } from '#lib/validation.ts';
 
 assert.equal(RECOGNITION_TIMEOUT_MS, 30_000);
 
-// Request: OpenAI chat format, the photo as a WebP data URL, the answer constrained by a JSON schema
-const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3]);
-const request = recognitionRequest(webp);
-const image = request.messages[1].content[0] as { image_url: { url: string } };
-assert.equal(image.image_url.url, `data:image/webp;base64,${Buffer.from(webp).toString('base64')}`);
-assert.deepEqual(request.response_format.json_schema.schema.properties.category.enum, ITEM_CATEGORIES);
+// Request: OpenAI chat format, the photo as uploaded in a data URL (llama-server can't read WebP), the answer
+// constrained by a JSON schema
+const photo = { bytes: new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3]), format: 'jpeg' as const };
+const imageUrl = (format: 'jpeg' | 'png') =>
+	(recognitionRequest({ ...photo, format }).messages[1].content[0] as { image_url: { url: string } }).image_url.url;
+assert.equal(imageUrl('jpeg'), `data:image/jpeg;base64,${Buffer.from(photo.bytes).toString('base64')}`);
+assert.ok(imageUrl('png').startsWith('data:image/png;base64,'));
+assert.deepEqual(recognitionRequest(photo).response_format.json_schema.schema.properties.category.enum, ITEM_CATEGORIES);
 
 // Answers
 const answer = (fields: object) =>
@@ -81,32 +83,32 @@ const llama = llamaModel({ url: 'http://model-box:8080/', apiKey: 'secret' });
 const failsWith = (message: RegExp) => (e: unknown) => e instanceof RecognitionError && message.test(e.message);
 
 stub(() => reply(answer({})));
-assert.equal((await recognizeItem(webp, llama))?.name, 'Žygio batai');
+assert.equal((await recognizeItem(photo, llama))?.name, 'Žygio batai');
 assert.equal(calls[0].url, 'http://model-box:8080/v1/chat/completions', 'trailing slash handled');
 assert.equal((calls[0].init.headers as Record<string, string>).authorization, 'Bearer secret');
 assert.ok(calls[0].init.signal instanceof AbortSignal, 'request has a timeout');
 
 stub(() => reply(answer({}), 'length'));
-await assert.rejects(recognizeItem(webp, llama), failsWith(/Nepavyko/), 'cut-off answer');
+await assert.rejects(recognizeItem(photo, llama), failsWith(/Nepavyko/), 'cut-off answer');
 assert.equal(calls.length, 1, 'a broken answer is not retried');
 stub(() => new Response('Unauthorized', { status: 401 }));
-await assert.rejects(recognizeItem(webp, llama), failsWith(/Nepavyko/), 'wrong API key');
+await assert.rejects(recognizeItem(photo, llama), failsWith(/Nepavyko/), 'wrong API key');
 assert.equal(calls.length, 1, 'a config error is not retried');
 stub(() => new Response('Loading model', { status: 503 }));
-await assert.rejects(recognizeItem(webp, llama), failsWith(/Nepavyko/), 'model still loading');
+await assert.rejects(recognizeItem(photo, llama), failsWith(/Nepavyko/), 'model still loading');
 assert.equal(calls.length, MAX_ATTEMPTS, 'busy model is retried');
 stub(() => Promise.reject(new TypeError('fetch failed')));
-await assert.rejects(recognizeItem(webp, llama), failsWith(/Nepavyko/), 'device unreachable');
+await assert.rejects(recognizeItem(photo, llama), failsWith(/Nepavyko/), 'device unreachable');
 assert.equal(calls.length, MAX_ATTEMPTS, 'unreachable device is retried');
 stub(() => (calls.length === 1 ? Promise.reject(new TypeError('fetch failed')) : reply(answer({}))));
-assert.equal((await recognizeItem(webp, llama))?.name, 'Žygio batai', 'dropped connection, the retry works');
+assert.equal((await recognizeItem(photo, llama))?.name, 'Žygio batai', 'dropped connection, the retry works');
 stub(() => Promise.reject(new DOMException('timed out', 'TimeoutError')));
-await assert.rejects(recognizeItem(webp, llama), failsWith(/per ilgai/), 'timeout has its own message');
+await assert.rejects(recognizeItem(photo, llama), failsWith(/per ilgai/), 'timeout has its own message');
 assert.equal(calls.length, 1, 'a timeout is not retried (another 30 s)');
-await assert.rejects(recognizeItem(webp, llamaModel({})), failsWith(/Nepavyko/), 'LLAMA_URL not set');
+await assert.rejects(recognizeItem(photo, llamaModel({})), failsWith(/Nepavyko/), 'LLAMA_URL not set');
 
 // Mock scenarios: the same objects the app plays with RECOGNITION_MOCK
-const schema = recognitionRequest(webp).response_format.json_schema.schema;
+const schema = recognitionRequest(photo).response_format.json_schema.schema;
 for (const response of Object.values(MOCK_RESPONSES).flat()) {
 	if (typeof response !== 'object' || response instanceof Error) continue;
 	assert.deepEqual(Object.keys(response).sort(), [...schema.required].sort(), 'mock answers follow the contract');
@@ -117,7 +119,7 @@ assert.ok(isMockScenario('flaky') && !isMockScenario('toString'), 'RECOGNITION_M
 const recognize = async (scenario: MockScenario) => {
 	const model = mockModel(scenario);
 	let count = 0;
-	const result = await recognizeItem(webp, (photo) => (count++, model(photo))).catch((error: unknown) => error);
+	const result = await recognizeItem(photo, (photo) => (count++, model(photo))).catch((error: unknown) => error);
 	return { result, calls: count };
 };
 const item = (result: unknown) => {

@@ -1,9 +1,9 @@
 import { fail } from '@sveltejs/kit';
 import { requireUser } from '#lib/server/auth.ts';
 import { createItem, deleteItem, hasItemNamed, listItems } from '#lib/server/inventory.ts';
-import { PhotoError, photoToWebp } from '#lib/server/photo.ts';
-import { mockModel } from '#lib/server/recognition-mocks.ts';
-import { RecognitionError, llamaModel, recognizeItem } from '#lib/server/recognition.ts';
+import { PhotoError, readPhoto } from '#lib/server/photo.ts';
+import { mockModel } from '#lib/server/llama_api/recognition-mocks.ts';
+import { RecognitionError, llamaModel, recognizeItem } from '#lib/server/llama_api/recognition.ts';
 import { readItemForm } from '#lib/validation.ts';
 import { LLAMA_API_KEY, LLAMA_URL, RECOGNITION_MOCK } from '$app/env/private';
 import type { Actions, PageServerLoad } from './$types';
@@ -34,8 +34,15 @@ export const actions: Actions = {
 	recognize: async ({ locals, request }) => {
 		requireUser(locals);
 		try {
-			const webp = await photoToWebp((await request.formData()).get('photo'));
-			const item = await recognizeItem(webp, model);
+			// ponytail: no WebP conversion for now, llama-server can't read WebP. JPG/PNG go as uploaded: full size (slower
+			// on big phone photos), not rotated, EXIF kept (only to the team's model device). HEIC can't go without a
+			// conversion, so it is refused. Converting to JPEG in photo.ts instead of WebP would bring all of that back.
+			// const webp = await photoToWebp((await request.formData()).get('photo'));
+			const photo = await readPhoto((await request.formData()).get('photo'));
+			if (photo.format === 'heic') {
+				throw new PhotoError('HEIC nuotraukų kol kas atpažinti negalime. Įkelk JPG arba PNG nuotrauką.');
+			}
+			const item = await recognizeItem(photo, model);
 			if (!item) return { notRecognized: true };
 			// It pre-fills the add form for the user to check. Nothing is saved until they press "Išsaugoti" (?/create).
 			return { recognized: item };

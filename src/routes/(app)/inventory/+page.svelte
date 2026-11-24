@@ -53,8 +53,7 @@
 			photoInput.value = '';
 		} else preview = URL.createObjectURL(file);
 	}
-	// The browser can't show this photo (HEIC outside Safari), so the server converts it, as it will for the model.
-	// ponytail: such a photo is uploaded twice (preview + recognition). Send the WebP for recognition if that hurts.
+	// The browser can't show this photo (HEIC outside Safari), so the server converts it.
 	async function convertPreview() {
 		const file = previewFile;
 		previewFile = undefined; // once: a WebP that still won't show isn't retried

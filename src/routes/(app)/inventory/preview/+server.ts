@@ -1,4 +1,4 @@
-// FR-17: preview for photos the browser can't show itself (HEIC outside Safari). Returns the same WebP the model gets.
+// FR-17: preview for photos the browser can't show itself (HEIC outside Safari). Returns it as WebP.
 // Nothing is stored (FR-25).
 import { requireUser } from '#lib/server/auth.ts';
 import { PhotoError, photoToWebp } from '#lib/server/photo.ts';
