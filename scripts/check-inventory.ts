@@ -36,6 +36,13 @@ tags.set('attributeName', ' svoris: ');
 tags.set('attributeValue', ' 1:2 kg ');
 assert.deepEqual(readItemForm(tags).input.attributes.at(-1), { name: 'svoris', value: '1:2 kg' }, '":" only splits once');
 assert.deepEqual(typedAttribute('', ' sunkus '), { name: 'sunkus', value: '' }, 'a value alone is a plain tag');
+// A tag without a value means "taip", so a typed yes is the same tag
+assert.deepEqual(typedAttribute('neperšlampamas', ' Taip '), { name: 'neperšlampamas', value: '' });
+assert.deepEqual(parseAttributes('neperpučiamas: true\nšiltas: YES\nspalva: taip mėlyna'), [
+	{ name: 'neperpučiamas', value: '' },
+	{ name: 'šiltas', value: '' },
+	{ name: 'spalva', value: 'taip mėlyna' } // only a bare yes
+]);
 assert.equal(typedAttribute(' ', ' '), null);
 tags.delete('attributeName');
 tags.delete('attributeValue');

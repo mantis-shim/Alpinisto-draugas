@@ -52,7 +52,16 @@
 		'Kišeninis peilis',
 		'Išorinė baterija'
 	];
-	const COMMON_ATTRIBUTES = ['spalva', 'medžiaga', 'svoris', 'dydis', 'talpa', 'komforto temperatūra', 'neperšlampamas'];
+	const COMMON_ATTRIBUTES = [
+		'spalva',
+		'medžiaga',
+		'svoris',
+		'dydis',
+		'talpa',
+		'komforto temperatūra',
+		'neperšlampamas',
+		'neperpučiamas'
+	];
 	// common ones first, then the user's own; "Spalva" and "spalva" are one suggestion
 	const attributeOptions = $derived([
 		...new Map([...COMMON_ATTRIBUTES, ...attributeNames].map((n) => [fold(n), n])).values()
@@ -170,7 +179,7 @@
 			/>
 		</div>
 		<div class="field">
-			<label for="item-attribute-value">Reikšmė</label>
+			<label for="item-attribute-value">Reikšmė <span class="optional">(neprivaloma)</span></label>
 			<input
 				bind:this={attributeValueInput}
 				id="item-attribute-value"
@@ -192,7 +201,7 @@
 		</button>
 	</div>
 	<p class="field-hint" id="item-attributes-hint">
-		Neprivaloma. Požymiui be reikšmės, pvz., „neperšlampamas“, reikšmę palik tuščią.
+		Požymis be reikšmės reiškia „taip“: „neperšlampamas“ = „neperšlampamas: taip“. Visi požymiai neprivalomi.
 	</p>
 	{#if errors.attributes}<p class="field-error" id="item-attributes-error">{errors.attributes}</p>{/if}
 </fieldset>
@@ -238,6 +247,10 @@
 	}
 	.tag-add .field {
 		flex: 1 1 8rem;
+	}
+	.optional {
+		font-weight: 400;
+		color: var(--c-text-muted);
 	}
 	.tag-add button {
 		margin-bottom: var(--space-4); /* level with the inputs, whose .field has this margin */

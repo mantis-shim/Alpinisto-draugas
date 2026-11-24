@@ -54,6 +54,11 @@ const attributes = parseRecognition(
 	answer({ attributes: [{ name: 'svoris:', value: '1:2' }, { name: ' ', value: 'be pavadinimo' }, 'junk', null] })
 )?.attributes;
 assert.deepEqual(attributes, [{ name: 'svoris', value: '1:2' }], 'colon removed from names, junk dropped');
+assert.deepEqual(
+	parseRecognition(answer({ attributes: [{ name: 'neperšlampamas', value: 'true' }] }))?.attributes,
+	[{ name: 'neperšlampamas', value: '' }],
+	'a model\'s "true" is a plain tag'
+);
 assert.equal(
 	parseRecognition(answer({ attributes: Array.from({ length: 20 }, (_, i) => ({ name: `a${i}`, value: '' })) }))
 		?.attributes.length,

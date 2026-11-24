@@ -106,7 +106,8 @@ users                      // unique email index
 
 items                      // the user's inventory; index { userId, name } with Lithuanian collation (LT_COLLATION)
   _id, userId, name, category: ItemCategory, suitability: Temperature[]
-  attributes: [{ name, value }]   // value '' for tag-like attributes ("neperšlampamas")
+  attributes: [{ name, value }]   // value '' = a tag that means "taip": "neperšlampamas" = "neperšlampamas: taip"
+                                  // (attributeValue() stores a typed "taip"/"true"/"yes" as '')
 
 hikes                      // trip + generated plan = trip history; index { userId, createdAt: -1 }
   _id, userId, location, departureDate, returnDate, season: Season, createdAt, updatedAt
@@ -325,6 +326,7 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 - Check `stop_reason` (handle `"refusal"`, `"max_tokens"`) before reading content. Use the SDK's typed errors
   (`Anthropic.RateLimitError`, `Anthropic.APIError`, ...) for the retry UX.
 - Send only what's needed: trip details, fitness level, inventory. **Never** email, password or user IDs.
+  An item attribute without a value is a "yes" ("neperšlampamas" = waterproof), so say so in the prompt.
 - Write the prompt in a way that makes the model answer in Lithuanian, state missing data explicitly, and not invent facts.
 
 ## Conventions & workflow

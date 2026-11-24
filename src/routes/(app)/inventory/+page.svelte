@@ -325,7 +325,7 @@
 			<select id="filter-tag" bind:value={tag}>
 				<option value="">Visi požymiai</option>
 				{#each [...tagGroups] as [group, attributes] (group)}
-					<optgroup label={group ? attributes[0].name : 'Be reikšmės'}>
+					<optgroup label={group ? attributes[0].name : 'Be reikšmės (taip)'}>
 						{#each attributes as attribute (tagKey(attribute))}
 							<!-- full text: the closed <select> shows only the option, and "ruda" alone says little -->
 							<option value={tagKey(attribute)}>{attributeText(attribute)}</option>

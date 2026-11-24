@@ -3,7 +3,7 @@
 // there, never to a third party. recognition-mocks.ts plays canned answers through the same seam (RecognitionModel).
 // No `$app/env` import here: the caller passes the config, so scripts/check-recognition.ts runs this with plain Node.
 import { ITEM_CATEGORIES, ITEM_LIMITS, type ItemCategory } from '#lib/domain.ts';
-import { attributeName } from '#lib/validation.ts';
+import { attributeName, attributeValue } from '#lib/validation.ts';
 
 /** Team decision 2026-11-23: wait up to 30 s, not the spec's 10 s (NŠ-1). The local model needs longer. */
 export const RECOGNITION_TIMEOUT_MS = 30_000;
@@ -105,7 +105,7 @@ export function parseRecognition(content: string): RecognizedItem | null {
 	const attributes = (Array.isArray(answer.attributes) ? answer.attributes : [])
 		.map((a: { name?: unknown; value?: unknown }) => ({
 			name: attributeName(text(a?.name, ITEM_LIMITS.attributeText)),
-			value: text(a?.value, ITEM_LIMITS.attributeText)
+			value: attributeValue(text(a?.value, ITEM_LIMITS.attributeText)) // a model's "true" = a plain tag
 		}))
 		.filter((a: { name: string }) => a.name)
 		.slice(0, MAX_ATTRIBUTES);
