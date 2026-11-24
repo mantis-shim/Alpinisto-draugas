@@ -96,10 +96,13 @@
 	<summary>Kaip apskaičiuojamas lygis?</summary>
 	<p>Už kiekvieną atsakymą gauni nuo 0 iki 2 balų:</p>
 	<ul>
-		<li>žingsniai per dieną: iki 4 999 – 0, nuo 5 000 iki 9 999 – 1, nuo 10 000 – 2 balai;</li>
-		<li>žygiai kalnuose per 3 metus: 0 – 0, 1–2 – 1, 3 ir daugiau – 2 balai.</li>
+		<li>
+			žingsniai per dieną: iki 4 999 – 0, nuo 5 000 iki 7 999 – 1, nuo 8 000 iki 11 999 – 2, nuo 12 000 – 3
+			balai;
+		</li>
+		<li>žygiai kalnuose per 3 metus: 0 – 0, 1–2 – 1, 3–5 – 2, 6 ir daugiau – 3 balai.</li>
 	</ul>
-	<p>Surinkus 0–1 balą lygis žemas, 2–3 balus – vidutinis, 4 balus – aukštas.</p>
+	<p>Surinkus 0–2 balus lygis žemas, 3–4 balus – vidutinis, 5–6 balus – aukštas.</p>
 </details>
 
 <style>

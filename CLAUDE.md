@@ -233,17 +233,21 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 - All answers required. Unanswered questions are highlighted and the form can't be submitted.
 - The backend (not the AI) assigns the level žemas / vidutinis / aukštas and shows it.
 - The user can view and change answers later, and the level is recalculated.
-- **Decided (team, 2026-11-23): two questions only**, stored as `fitnessAssessment.averageDailySteps` and `hikesLast3Years`
-  (whole numbers ≥ 0; upper bounds 100 000 / 1 000 only catch typos). Each answer gives 0–2 points:
-  steps < 5 000 → 0, 5 000–9 999 → 1, ≥ 10 000 → 2; hikes 0 → 0, 1–2 → 1, ≥ 3 → 2.
-  Sum 0–1 → LOW, 2–3 → MEDIUM, 4 → HIGH. Rules and formula live in `src/lib/fitness.ts` (the page explains them too).
+- **Two questions only**, stored as `fitnessAssessment.averageDailySteps` and `hikesLast3Years`
+  - Limits: 500–50 000 steps a day and 0–150 hikes in 3 years; other answers get an error next to the field.
+  - Each answer gives 0–3 points: steps < 5 000 → 0, 5 000–7 999 → 1, 8 000–11 999 → 2, ≥ 12 000 → 3;
+    hikes 0 → 0, 1–2 → 1, 3–5 → 2, ≥ 6 → 3. Sum 0–2 → LOW, 3–4 → MEDIUM, 5–6 → HIGH.
+  - On purpose, one strong answer can't make up for a weak other one (fit but no mountain experience, or experienced
+    but inactive, is MEDIUM at most): the app exists because beginners overestimate themselves.
+  - Levels already saved are not recalculated; they update when the user submits the questionnaire again.
+  - Rules and formula live in `src/lib/fitness.ts` (the page explains them too).
 
 ### UC-6 Trip details (US-7, US-8, Upyna, S2) FR-35–38
 - Location as free text, required (error if missing), changeable before generating.
 - Departure and return dates (`YYYY-MM-DD`). Departure ≥ today, return ≥ departure, clear error otherwise.
 - Departure date far away: warn that the weather estimate may be inaccurate and may change.
 - The backend computes duration (days) and season from the dates, saves the trip, and shows a summary with a "Generuoti rekomendacijas" button.
-- **Decided (team, 2026-11-23)**. Rules live in `src/lib/trip.ts`, DB access in `src/lib/server/trips.ts`:
+- Rules live in `src/lib/trip.ts`, DB access in `src/lib/server/trips.ts`:
   - "Far" departure date: more than 10 days from today → show the warning that the weather estimate may be inaccurate
     and may change (reliable forecasts reach ~7–10 days). "Today" is the date in Europe/Vilnius.
   - Season from the departure month: Dec–Feb WINTER, Mar–May SPRING, Jun–Aug SUMMER, Sep–Nov AUTUMN.
