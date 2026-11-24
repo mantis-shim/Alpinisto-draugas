@@ -218,7 +218,7 @@
 				};
 			}}
 		>
-			{#if form?.badPhoto}
+			{#if form?.badPhoto && photoNote === undefined}
 				<p class="notice notice-warning" role="status">{form.badPhoto} Arba įvesk daiktą ranka.</p>
 			{/if}
 			<div class="field">
