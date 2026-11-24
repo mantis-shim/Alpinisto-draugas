@@ -53,9 +53,6 @@ export const ITEM_LIMITS = { name: 100, attributes: 30, attributeText: 100 } as 
 /** FR-16. Checked in the browser (before a slow upload) and on the server. Production: BODY_SIZE_LIMIT in .env.example. */
 export const PHOTO_MAX_BYTES = 10 * 1024 * 1024;
 
-/** A photo-recognised item below this confidence (%) gets the "Patikrinkite" tag (UC-3). */
-export const RECOGNITION_CHECK_BELOW = 70;
-
 export const SEASONS =['WINTER', 'SPRING', 'SUMMER', 'AUTUMN'] as const;
 export type Season = (typeof SEASONS)[number];
 

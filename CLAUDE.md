@@ -95,7 +95,7 @@ Layered (Coad–Yourdon), from the component diagram. UI and orchestrator are th
   **data access** (the only code that touches Mongo), **AI orchestration** (builds the LLM request, validates the response,
   stores the recommendations).
 - **Data**: MongoDB. The client never talks to the DB directly.
-- **Item recognition subsystem**: local llama.cpp model. Gets a photo, returns name, category, attributes and confidence.
+- **Item recognition subsystem**: local llama.cpp model. Gets a photo, returns name, category, suitability and attributes.
 - **External LLM**: only the AI orchestration component calls it, behind one module, so the provider/model can be swapped.
 - Don't call OS APIs directly. Use the Node stdlib and framework abstractions (portability requirement).
 
@@ -197,24 +197,28 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 - "Įkelti iš galerijos" lets the user pick **one** photo. Accept JPG, PNG or HEIC ≤ 10 MB, otherwise show a clear error with the reason.
 - Show a preview before sending, and let the user replace the photo. If gallery permission is missing, explain how to grant it.
 - Send it to the local model, which returns name, category, attributes (e.g. colour, material, weight, or tags such as
-  `neperšlampamas`, `sunkus`, `apsaugo_nuo_uodų`) and a confidence %. **Result within 10 s** (NŠ-1).
+  `neperšlampamas`, `sunkus`, `apsaugo_nuo_uodų`). **Result within 10 s** (NŠ-1).
   **Decided (team, 2026-11-23): wait up to 30 s** (`RECOGNITION_TIMEOUT_MS` in `src/lib/server/llama_api/recognition.ts`), because the local model is slower.
   An unreachable or busy model device (network error, HTTP 5xx) is retried once automatically. A timeout or a broken answer
   isn't (another 30 s, same answer): the user gets "Bandyti dar kartą".
-- Confidence < 70 %: tag the item "Patikrinkite".
+- **Changed (Vincentas, 2026-11-24): no confidence %** (the spec's "below 70 %: Patikrinkite" is dropped). The pre-filled form
+  always says the fields come from AI, which can misidentify the item or its attributes, and must be checked before saving.
 - Not recognised: tip "photograph in a bright place, one item per frame" and offer manual add (UC-2 form).
-  **Decided (Vincentas, 2026-11-24):** the model judges the photo first (`OK`/`BLURRY`/`TOO_DARK`/`SEVERAL_ITEMS`/`NO_GEAR`); a
-  bad photo gets its own tip (`PHOTO_PROBLEM_TIPS`) and a request for a better one. The model picks the item, colour and
-  material from **English options** that the app maps to fixed Lithuanian words (`ITEM_TYPES`, `COLOURS`, `MATERIALS`): asked for
-  Lithuanian text, the 3B model made up words and tags it couldn't see. "other" leaves the name empty for the user.
+- **Changed (Vincentas, 2026-11-24): the prompt and output format live on the model device.** Its chat template holds the
+  system prompt and a GBNF grammar (`gear.gbnf`) forces a text answer: an English name, `Category:`, `Suitability:` (COLD/Warm/HOT)
+  and per-category attribute lines (`waterproof = yes`, `ankle_support = high`, ...). The app sends **only the photo** (no
+  prompt, no `response_format`, which would replace the grammar) and `parseRecognition` maps the answer to Lithuanian: names via
+  `ITEM_TYPES` (unknown name → empty, the user types it), attribute lines via `ATTRIBUTES`. **Change both together with the grammar.**
+  Asked for Lithuanian, the 3B model made up words. The grammar has no photo verdict, so the photo hint gives the bright place /
+  one item tip up front.
 - "Generuoti iš naujo" (Vincentas, 2026-11-24): after a **successful** first recognition, the same photo can be regenerated up to
   5 times (`MAX_REGENERATIONS`). The server enforces it per user by a hash of the photo (in memory, never the photo), the page only
-  shows the button then. It resends the same request at a higher temperature, with the photo verdict fixed to OK and no "other":
+  shows the button then. It resends the same request at a higher temperature:
   llama-server still has the photo processed (prompt cache), so it takes ~3 s instead of ~20 s.
 - Show attributes next to the photo. Each attribute can be **confirmed / edited / rejected**, the name is editable, and there's a
   "Patvirtinti visus" button. Rejecting the whole item saves nothing. **Only confirmed items enter the inventory.**
   **Changed (Vincentas, 2026-11-24):** no per-attribute review. A recognised item pre-fills the normal add form (attributes one
-  per tag, removable, new ones via "Pridėti požymį") next to the photo, with the confidence and "Patikrinkite". "Išsaugoti" confirms it,
+  per tag, removable, new ones via "Pridėti požymį") next to the photo, with the AI note. "Išsaugoti" confirms it,
   "Atšaukti" (closing the popup) rejects it and saves nothing.
 - Photos are processed and discarded, **never stored**.
 - HEIC: most browsers can't render it in `<img>` and llama-server can't read it, so the server converts it: WebP for the preview,
@@ -337,7 +341,7 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
   - `.button` with `-secondary`, `-ghost`, `-danger`, `-large`, `-cta`. A plain `<button>` is primary by default.
     `-cta` is the bright green "add" action (`--c-cta`): the page's one main call to action and the submit buttons of its popup.
   - `.field`, `.field-hint`, `.field-error` for form fields.
-  - `.tag` with `-primary`, `-warning`, `-danger`, `-success` (Būtinas, Rekomenduojamas, Patikrinkite).
+  - `.tag` with `-primary`, `-warning`, `-danger`, `-success` (Būtinas, Rekomenduojamas).
   - `.notice` with `-warning`, `-danger`, `-success` (disclaimers, errors).
   - `.panel`, `.spinner`, `.container`, `.visually-hidden`.
 - Theme: colours use `light-dark()` and follow the OS by default. A theme toggle sets `data-theme="light"|"dark"` on `<html>`.
@@ -378,7 +382,8 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 ## Open decisions (not in the spec — decide, then record the answer here)
 
 1. **Local vision model**: runs `ggml-org/Qwen2.5-VL-3B-Instruct-GGUF` (llama-server at `LLAMA_URL`, API key `LLAMA_API_KEY`).
-   Prompt + JSON schema in `src/lib/server/llama_api/recognition.ts`. Still open: model choice final? Real test
+   Prompt, chat template and grammar on the model device; the answer parser in `src/lib/server/llama_api/recognition.ts`
+   (see UC-3). The test below was with the earlier JSON prompt. Still open: model choice final? Real test
    (2026-11-24, 1 slot, 4096 ctx): a new photo ~20 s (mostly the image step; a 12 MP JPEG took 29.5 s, near the 30 s timeout),
    the same photo again ~3 s. With the English options it named boots, sleeping bag, tent and torch right and caught blurry and
    dark photos, but missed a photo with three items and called a landscape "BLURRY". A longer prompt with app context made it worse.

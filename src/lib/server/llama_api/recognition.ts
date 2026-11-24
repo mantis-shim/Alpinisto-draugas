@@ -1,21 +1,20 @@
 // UC-3: recognise an item in a photo with llama-server on the team's model device (LLAMA_URL).
+// The prompt, chat template and output grammar (gear.gbnf) live on the model device, so the app sends only the photo.
+// The grammar makes the model answer in this text format, which parseRecognition turns into an item:
+//   Hiking boots
+//   Category: Footwear
+//   Suitability: COLD, Warm
+//   Attributes:
+//   waterproof = yes
+//   ankle_support = high
 import { createHash } from 'node:crypto';
-import { ITEM_CATEGORIES, type ItemCategory } from '#lib/domain.ts';
+import { ITEM_CATEGORIES, TEMPERATURES, type InventoryItem, type ItemCategory } from '#lib/domain.ts';
 import type { ModelPhoto } from '#lib/server/photo.ts';
 
 export const RECOGNITION_TIMEOUT_MS = 30_000;
 
-export const PHOTO_VERDICTS = ['OK', 'BLURRY', 'TOO_DARK', 'SEVERAL_ITEMS', 'NO_GEAR'] as const;
-export type PhotoProblem = Exclude<(typeof PHOTO_VERDICTS)[number], 'OK'>;
-
-export const PHOTO_PROBLEM_TIPS: Record<PhotoProblem, string> = {
-	BLURRY: 'Nuotrauka neryški, daikto neįžiūrėti. Laikyk telefoną ramiai, palauk, kol vaizdas taps ryškus, ir fotografuok dar kartą.',
-	TOO_DARK: 'Nuotrauka per tamsi. Fotografuok daiktą šviesioje vietoje.',
-	SEVERAL_ITEMS: 'Nuotraukoje keli daiktai. Fotografuok po vieną daiktą kadre.',
-	NO_GEAR: 'Nuotraukoje neradome žygio ekipuotės. Fotografuok daiktą iš arčiau, šviesioje vietoje, po vieną kadre.'
-};
-
-// The model picks English options and we write the Lithuanian: its own Lithuanian was made-up words.
+// The model answers in English (its own Lithuanian was made-up words); we write the Lithuanian.
+// Looked up without case and a final "s" (see itemKey), so "Hiking boot" is found too.
 const ITEM_TYPES: Record<string, [name: string, category: ItemCategory]> = {
 	'hiking boots': ['Žygio batai', 'FOOTWEAR'],
 	'trail shoes': ['Žygio bateliai', 'FOOTWEAR'],
@@ -33,7 +32,7 @@ const ITEM_TYPES: Record<string, [name: string, category: ItemCategory]> = {
 	tent: ['Palapinė', 'SLEEP'],
 	map: ['Žemėlapis', 'NAVIGATION'],
 	compass: ['Kompasas', 'NAVIGATION'],
-	'GPS device': ['GPS imtuvas', 'NAVIGATION'],
+	'gps device': ['GPS imtuvas', 'NAVIGATION'],
 	headlamp: ['Galvos žibintuvėlis', 'TOOLS'],
 	flashlight: ['Žibintuvėlis', 'TOOLS'],
 	'first aid kit': ['Vaistinėlė', 'MEDICINE'],
@@ -48,49 +47,41 @@ const ITEM_TYPES: Record<string, [name: string, category: ItemCategory]> = {
 	'power bank': ['Išorinė baterija', 'TOOLS'],
 	sunglasses: ['Saulės akiniai', 'OTHER']
 };
-const COLOURS: Record<string, string> = {
-	black: 'juoda',
-	white: 'balta',
-	grey: 'pilka',
-	brown: 'ruda',
-	beige: 'smėlio',
-	red: 'raudona',
-	orange: 'oranžinė',
-	yellow: 'geltona',
-	green: 'žalia',
-	blue: 'mėlyna',
-	purple: 'violetinė',
-	pink: 'rožinė',
-	multicoloured: 'marga'
-};
-const MATERIALS: Record<string, string> = {
-	leather: 'oda',
-	'synthetic fabric': 'sintetinis audinys',
-	fleece: 'flisas',
-	wool: 'vilna',
-	down: 'pūkai',
-	cotton: 'medvilnė',
-	plastic: 'plastikas',
-	metal: 'metalas',
-	rubber: 'guma'
+const itemKey = (name: string) => name.trim().toLowerCase().replace(/s$/, '');
+const ITEM_NAMES = new Map(Object.entries(ITEM_TYPES).map(([english, item]) => [itemKey(english), item]));
+
+// Every attribute line gear.gbnf allows -> the inventory attribute (value '' = "taip", see attributeValue).
+const ATTRIBUTES: Record<string, [name: string, value: string]> = {
+	'waterproof = yes': ['neperšlampamas', ''],
+	'waterproof = partially': ['neperšlampamas', 'iš dalies'],
+	'waterproof = no': ['neperšlampamas', 'ne'],
+	'windproof = yes': ['neperpučiamas', ''],
+	'windproof = no': ['neperpučiamas', 'ne'],
+	'layer = base': ['sluoksnis', 'apatinis'],
+	'layer = mid': ['sluoksnis', 'vidurinis'],
+	'layer = outer': ['sluoksnis', 'viršutinis'],
+	'ankle_support = low': ['kulkšnies fiksacija', 'silpna'],
+	'ankle_support = mid': ['kulkšnies fiksacija', 'vidutinė'],
+	'ankle_support = high': ['kulkšnies fiksacija', 'stipri'],
+	'capacity = single': ['talpa', 'vienam asmeniui'],
+	'capacity = double': ['talpa', 'dviem asmenims'],
+	'capacity = group': ['talpa', 'grupei'],
+	'requires_fuel = yes': ['reikia kuro', ''],
+	'requires_fuel = no': ['reikia kuro', 'ne'],
+	'requires_power = yes': ['reikia elektros', ''],
+	'requires_power = no': ['reikia elektros', 'ne'],
+	'requires_power = battery': ['maitinimas', 'baterijos'],
+	'requires_power = rechargeable': ['maitinimas', 'įkraunamas'],
+	'prep_needed = ready_to_eat': ['paruošimas', 'paruoštas valgyti'],
+	'prep_needed = boil_water': ['paruošimas', 'užpilti verdančiu vandeniu'],
+	'prep_needed = cook': ['paruošimas', 'reikia virti'],
+	'pack_volume = compact': ['užima vietos', 'mažai'],
+	'pack_volume = medium': ['užima vietos', 'vidutiniškai'],
+	'pack_volume = bulky': ['užima vietos', 'daug']
 };
 
-/** The model's raw answer, untrusted until parseRecognition. */
-export type ModelAnswer = {
-	photo: (typeof PHOTO_VERDICTS)[number];
-	item: string;
-	category: ItemCategory; // only used for "other"
-	colour: string;
-	material: string;
-	confidence: number;
-};
-
-export type RecognizedItem = {
-	name: string; // '' when the model said "other"
-	category: ItemCategory;
-	attributes: { name: string; value: string }[];
-	confidence: number;
-};
+/** name is '' when we have no Lithuanian name for what the model said: the user types it. */
+export type RecognizedItem = Omit<InventoryItem, 'id'>;
 
 /** llamaModel or mockModel. Throws ModelUnavailable (retried), a TimeoutError or any other error. */
 export type RecognitionModel = (photo: ModelPhoto, regenerate?: boolean) => Promise<string>;
@@ -104,79 +95,41 @@ const FAILED = 'Nepavyko atpažinti daikto. Bandyk dar kartą arba pridėk daikt
 const TOO_SLOW = 'Atpažinimas užtruko per ilgai. Bandyk dar kartą arba pridėk daiktą ranka.';
 export const MAX_ATTEMPTS = 2;
 export const MAX_REGENERATIONS = 5;
-const REGENERATE_TEMPERATURE = 0.6; // 0.8 turned boots into sunglasses
+const REGENERATE_TEMPERATURE = 0.3; // 0.8 turned boots into sunglasses
 const REGENERATE_WITHIN_MS = 30 * 60_000;
 
-// Short on purpose: a longer prompt with more context made this 3B model worse.
-const PROMPT = `You look at photos for a hiking app. A beginner hiker photographs one piece of their own gear to add it to their gear list; they check your answer before saving it.
-Answer only with JSON that matches the schema.
-- photo: OK when one item is clearly visible. BLURRY: out of focus, the item can't be made out. TOO_DARK: too dark to see the item. SEVERAL_ITEMS: two or more different items and none is clearly the main one; a pair of boots or gloves is one item. NO_GEAR: no hiking gear at all, e.g. a landscape, a person or a room.
-- item: what the item is; "other" if no option fits.
-- category: FOOTWEAR, CLOTHING, SLEEP (tent, sleeping bag, mat), NAVIGATION, MEDICINE (first aid, sunscreen), FOOD (food, water, cooking), TOOLS, OTHER.
-- colour, material: the main ones you can see; "unclear" if you can't tell.
-- confidence: 0-100, how sure you are about item. 90 or more only when it is unmistakable.`;
-
-const SCHEMA = {
-	type: 'object',
-	required: ['photo', 'item', 'category', 'colour', 'material', 'confidence'],
-	properties: {
-		photo: { enum: PHOTO_VERDICTS },
-		item: { enum: [...Object.keys(ITEM_TYPES), 'other'] },
-		category: { enum: ITEM_CATEGORIES },
-		colour: { enum: [...Object.keys(COLOURS), 'unclear'] },
-		material: { enum: [...Object.keys(MATERIALS), 'unclear'] },
-		confidence: { type: 'integer', minimum: 0, maximum: 100 }
-	}
-};
-// The photo already passed, and "other" would empty the name the user has.
-const REGENERATE_SCHEMA = {
-	...SCHEMA,
-	properties: { ...SCHEMA.properties, photo: { enum: ['OK'] }, item: { enum: Object.keys(ITEM_TYPES) } }
-};
-
-// A regeneration sends the same messages, so llama-server's prompt cache skips the image step (~3 s instead of ~20 s).
+// Only the photo: no prompt (the model device's chat template has it) and no response_format, which would
+// replace the device's grammar. A regeneration sends the same messages, so llama-server's prompt cache skips
+// the image step (~3 s instead of ~20 s).
 export const recognitionRequest = ({ bytes, format }: ModelPhoto, regenerate = false) => ({
 	messages: [
-		{ role: 'system', content: PROMPT },
 		{
 			role: 'user',
-			content: [
-				{ type: 'image_url', image_url: { url: `data:image/${format};base64,${Buffer.from(bytes).toString('base64')}` } },
-				{ type: 'text', text: 'What is in this photo?' }
-			]
+			content: [{ type: 'image_url', image_url: { url: `data:image/${format};base64,${Buffer.from(bytes).toString('base64')}` } }]
 		}
 	],
-	response_format: { type: 'json_schema', json_schema: { name: 'item', schema: regenerate ? REGENERATE_SCHEMA : SCHEMA } },
 	temperature: regenerate ? REGENERATE_TEMPERATURE : 0.1,
 	cache_prompt: true,
 	max_tokens: 200
 });
 
-const pick = (options: Record<string, string>, key: unknown) =>
-	typeof key === 'string' && Object.hasOwn(options, key) ? options[key] : undefined;
+const ANSWER = /^(.+)\nCategory: (\w+)\nSuitability: (.+)\nAttributes:((?:\n.+)*)\n*$/;
 
-export function parseRecognition(content: string): RecognizedItem | PhotoProblem {
-	let answer;
-	try {
-		answer = JSON.parse(content);
-	} catch (error) {
-		throw new RecognitionError(FAILED, { cause: error });
+/** The model's text answer (format at the top of this file) -> the item for the add form. */
+export function parseRecognition(content: string): RecognizedItem {
+	const [, english, modelCategory, temperatures, lines] = ANSWER.exec(content.trim()) ?? [];
+	const category = modelCategory?.toUpperCase() as ItemCategory;
+	if (!ITEM_CATEGORIES.includes(category)) {
+		throw new RecognitionError(FAILED, { cause: new Error(`unexpected answer: ${content.slice(0, 300)}`) });
 	}
-	if (!PHOTO_VERDICTS.includes(answer?.photo)) {
-		throw new RecognitionError(FAILED, { cause: new Error(`answer without "photo": ${content.slice(0, 300)}`) });
-	}
-	if (answer.photo !== 'OK') return answer.photo;
-	const [name, category] = (typeof answer.item === 'string' && Object.hasOwn(ITEM_TYPES, answer.item)
-		? ITEM_TYPES[answer.item]
-		: ['', ITEM_CATEGORIES.includes(answer.category) ? answer.category : 'OTHER']) as [string, ItemCategory];
-	const colour = pick(COLOURS, answer.colour);
-	const material = pick(MATERIALS, answer.material);
-	const attributes = [
-		...(colour ? [{ name: 'spalva', value: colour }] : []),
-		...(material ? [{ name: 'medžiaga', value: material }] : [])
-	];
-	const confidence = Number.isFinite(answer.confidence) ? Math.round(Math.min(100, Math.max(0, answer.confidence))) : 0;
-	return { name, category, attributes, confidence };
+	const [name, knownCategory] = ITEM_NAMES.get(itemKey(english)) ?? ['', category];
+	const suitability = TEMPERATURES.filter((t) => temperatures.toUpperCase().split(', ').includes(t));
+	const attributes = lines
+		.split('\n')
+		.filter((line) => Object.hasOwn(ATTRIBUTES, line.trim()))
+		.map((line) => ATTRIBUTES[line.trim()])
+		.map(([name, value]) => ({ name, value }));
+	return { name, category: knownCategory, suitability, attributes };
 }
 
 export const llamaModel =
@@ -211,7 +164,7 @@ export async function recognizeItem(
 	photo: ModelPhoto,
 	model: RecognitionModel,
 	regenerate = false
-): Promise<RecognizedItem | PhotoProblem> {
+): Promise<RecognizedItem> {
 	for (let attempt = 1; ; attempt++) {
 		let content;
 		try {

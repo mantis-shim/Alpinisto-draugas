@@ -1,27 +1,16 @@
 // Canned replies, one per branch of the UC-3 flow: RECOGNITION_MOCK=<scenario>, tested by check-recognition.
-import { ModelUnavailable, type ModelAnswer, type RecognitionModel } from '#lib/server/llama_api/recognition.ts';
+// Replies are text in the format the model device's grammar (gear.gbnf) allows, see recognition.ts.
+import { ModelUnavailable, type RecognitionModel } from '#lib/server/llama_api/recognition.ts';
 
-type MockResponse = ModelAnswer | string | Error;
+type MockResponse = string | Error;
 
-const boots: ModelAnswer = {
-	photo: 'OK',
-	item: 'hiking boots',
-	category: 'FOOTWEAR',
-	colour: 'brown',
-	material: 'leather',
-	confidence: 92
-};
-const badPhoto = { item: 'other', category: 'OTHER', colour: 'unclear', material: 'unclear', confidence: 0 } as const;
+const boots = 'Hiking boots\nCategory: Footwear\nSuitability: COLD, Warm\nAttributes:\nwaterproof = yes\nankle_support = high\n';
 const down = new ModelUnavailable('llama-server unreachable', { cause: new TypeError('fetch failed') });
 
 export const MOCK_RESPONSES = {
-	confident: boots,
-	threshold: { ...boots, confidence: 70 },
-	lowConfidence: { ...boots, confidence: 69 },
-	missingAttributes: { ...boots, material: 'unclear', confidence: 81 },
-	unknownItem: { ...boots, item: 'other', category: 'TOOLS', colour: 'red', material: 'metal', confidence: 60 },
-	notRecognized: { ...badPhoto, photo: 'NO_GEAR' },
-	blurry: { ...badPhoto, photo: 'BLURRY' },
+	recognized: boots,
+	noAttributes: 'Tent\nCategory: Sleep\nSuitability: Warm\nAttributes:\n',
+	unknownItem: 'Ice axe\nCategory: Tools\nSuitability: COLD\nAttributes:\npack_volume = bulky\n',
 	invalid: 'Nuotraukoje matau rudus žygio batus.',
 	timeout: new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
 	unreachable: down,
@@ -38,6 +27,6 @@ export function mockModel(scenario: MockScenario): RecognitionModel {
 	return async () => {
 		const response = responses[calls++ % responses.length];
 		if (response instanceof Error) throw response;
-		return typeof response === 'string' ? response : JSON.stringify(response);
+		return response;
 	};
 }

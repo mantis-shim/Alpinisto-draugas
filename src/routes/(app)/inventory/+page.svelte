@@ -7,7 +7,6 @@
 		CATEGORY_LABELS,
 		ITEM_CATEGORIES,
 		PHOTO_MAX_BYTES,
-		RECOGNITION_CHECK_BELOW,
 		TEMPERATURE_LABELS,
 		type InventoryItem
 	} from '#lib/domain.ts';
@@ -20,7 +19,7 @@
 	let addDialog: HTMLDialogElement;
 	let addForm: HTMLFormElement;
 	let mode: 'text' | 'photo' = $state('text');
-	let ai: { confidence: number; regenerationsLeft: number } | null = $state(null);
+	let ai: { regenerationsLeft: number } | null = $state(null);
 	const emptyValues: ItemFormValues = { name: '', category: '', suitability: [], attributes: '' };
 	let prefill = $state.raw(emptyValues);
 	const addValues = $derived(form?.values ?? prefill);
@@ -84,7 +83,7 @@
 		photoInput.value = '';
 		showPhoto(undefined);
 		addForm.reset();
-		if (form?.values || form?.recognized || form?.photoError || form?.badPhoto) {
+		if (form?.values || form?.recognized || form?.photoError) {
 			await applyAction({ type: 'success', status: 200, location: location.href });
 		}
 	}
@@ -207,20 +206,17 @@
 					if (!addDialog.open) return; // closed while waiting
 					await update({ reset: false });
 					if (form?.recognized) {
-						prefill = itemFormValues({ suitability: [], ...form.recognized });
-						ai = { confidence: form.recognized.confidence, regenerationsLeft: form.regenerationsLeft };
+						prefill = itemFormValues(form.recognized);
+						ai = { regenerationsLeft: form.regenerationsLeft };
 						mode = 'text';
 						if (!again) setTimeout(() => document.getElementById('item-name')?.focus());
 					} else if (again && ai) {
-						regenerateNote = form?.badPhoto ?? form?.photoError ?? 'Nepavyko. Bandyk dar kartą.';
+						regenerateNote = form?.photoError ?? 'Nepavyko. Bandyk dar kartą.';
 						ai.regenerationsLeft = result.type === 'failure' && !form?.retry ? 0 : ai.regenerationsLeft - 1;
 					}
 				};
 			}}
 		>
-			{#if form?.badPhoto && photoNote === undefined}
-				<p class="notice notice-warning" role="status">{form.badPhoto} Arba įvesk daiktą ranka.</p>
-			{/if}
 			<div class="field">
 				<label for="item-photo">Įkelti iš galerijos</label>
 				<input
@@ -234,7 +230,9 @@
 					onchange={(e) => showPhoto(e.currentTarget.files?.[0])}
 					oncancel={() => (galleryHelp = true)}
 				/>
-				<p class="field-hint" id="item-photo-hint">JPG, PNG arba HEIC iki 10 MB. Vienoje nuotraukoje – vienas daiktas.</p>
+				<p class="field-hint" id="item-photo-hint">
+					JPG, PNG arba HEIC iki 10 MB. Fotografuok šviesioje vietoje, po vieną daiktą kadre.
+				</p>
 				{#if photoError}<p class="field-error" id="item-photo-error">{photoError}</p>{/if}
 			</div>
 			{#if preview}
@@ -288,11 +286,10 @@
 				}}
 		>
 			{#if ai}
-				<p class="notice" role="status">
-					Laukus užpildė dirbtinis intelektas (tikrumas {ai.confidence} %). Patikrink ir pataisyk juos: į inventorių
-					daiktas pateks tik paspaudus „Išsaugoti“.
+				<p class="notice notice-warning" role="status">
+					Laukus užpildė dirbtinis intelektas, o jis gali neteisingai atpažinti daiktą ar jo požymius. Patikrink ir
+					pataisyk laukus: į inventorių daiktas pateks tik paspaudus „Išsaugoti“.
 					{#if !prefill.name}Daikto pavadinimą įrašyk pats.{/if}
-					{#if ai.confidence < RECOGNITION_CHECK_BELOW}<span class="tag tag-warning">Patikrinkite</span>{/if}
 				</p>
 			{/if}
 			{#if form?.duplicate}

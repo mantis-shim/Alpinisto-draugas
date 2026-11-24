@@ -5,7 +5,6 @@ import { PhotoError, photoForModel, readPhoto } from '#lib/server/photo.ts';
 import { mockModel } from '#lib/server/llama_api/recognition-mocks.ts';
 import {
 	MAX_REGENERATIONS,
-	PHOTO_PROBLEM_TIPS,
 	RecognitionError,
 	allowRegeneration,
 	forgetRecognition,
@@ -52,9 +51,8 @@ export const actions: Actions = {
 				regenerationsLeft = takeRegeneration(user.id, upload);
 				if (regenerationsLeft === null) return fail(409, { photoError: CANNOT_REGENERATE, retry: false });
 			} else forgetRecognition(user.id);
-			const result = await recognizeItem(await photoForModel(upload), model, regenerate);
-			if (typeof result === 'string') return { badPhoto: PHOTO_PROBLEM_TIPS[result] };
-			return { recognized: result, regenerationsLeft: regenerationsLeft ?? allowRegeneration(user.id, upload) };
+			const recognized = await recognizeItem(await photoForModel(upload), model, regenerate);
+			return { recognized, regenerationsLeft: regenerationsLeft ?? allowRegeneration(user.id, upload) };
 		} catch (error) {
 			if (error instanceof PhotoError) return fail(400, { photoError: error.message, retry: false });
 			if (error instanceof RecognitionError) {

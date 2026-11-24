@@ -422,7 +422,7 @@ legend {
 	font-size: var(--text-l);
 }
 
-/* Tags: Būtinas, Rekomenduojamas, Patikrinkite, item suitability */
+/* Tags: Būtinas, Rekomenduojamas, item suitability */
 .tag {
 	display: inline-flex;
 	align-items: center;
