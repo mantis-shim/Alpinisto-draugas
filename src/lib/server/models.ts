@@ -5,6 +5,7 @@ import {
 	FITNESS_LEVELS,
 	HIKE_DIFFICULTIES,
 	ITEM_CATEGORIES,
+	ITEM_LIMITS,
 	ITEM_PRIORITIES,
 	SEASONS,
 	TEMPERATURES
@@ -52,20 +53,30 @@ export const User = mongoose.model('User', userSchema, undefined, compile);
 
 const attributeSchema = new Schema(
 	{
-		name: { type: String, required: true, trim: true }, // e.g. "spalva", "neperšlampamas"
-		value: { type: String, default: '', trim: true } // empty for tag-like attributes
+		// e.g. "spalva", "neperšlampamas"
+		name: { type: String, required: true, trim: true, maxlength: ITEM_LIMITS.attributeText },
+		// empty for tag-like attributes
+		value: { type: String, default: '', trim: true, maxlength: ITEM_LIMITS.attributeText }
 	},
 	{ _id: false }
 );
 
 const itemSchema = new Schema({
 	userId: { type: ObjectId, required: true },
-	name: { type: String, required: true, trim: true },
+	name: { type: String, required: true, trim: true, maxlength: ITEM_LIMITS.name },
 	category: { type: String, enum: ITEM_CATEGORIES, required: true },
 	suitability: [{ type: String, enum: TEMPERATURES }],
-	attributes: [attributeSchema]
+	attributes: {
+		type: [attributeSchema],
+		validate: (list: unknown[]) => list.length <= ITEM_LIMITS.attributes
+	}
 });
-itemSchema.index({ userId: 1, name: 1 }); // inventory sorted by name, duplicate-name check
+
+/** Lithuanian alphabetical order (Ą next to A, not after Z); strength 2 also ignores case. */
+export const LT_COLLATION = { locale: 'lt', strength: 2 };
+// Inventory sorted by name + duplicate-name check. MongoDB uses an index for collated queries only if the index has the
+// same collation. Named explicitly: dev DBs may still hold the old plain index under the default name userId_1_name_1.
+itemSchema.index({ userId: 1, name: 1 }, { collation: LT_COLLATION, name: 'userId_name_lt' });
 
 export const Item = mongoose.model('Item', itemSchema, undefined, compile);
 

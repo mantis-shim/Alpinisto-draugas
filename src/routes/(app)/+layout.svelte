@@ -6,17 +6,22 @@
 
 	let { children }: LayoutProps = $props();
 
-	const links = [
-		{ route: '/(app)/plan', label: 'Kelionės planavimas' },
-		{ route: '/(app)/account', label: 'Paskyra' }
-	] as const;
+	// `sub`: pages reached from this one, not listed in the nav; the link stays highlighted on them
+	const links: { route: '/(app)/plan' | '/(app)/inventory' | '/(app)/account'; label: string; sub: string[] }[] = [
+		{ route: '/(app)/plan', label: 'Kelionės planavimas', sub: [] },
+		{ route: '/(app)/inventory', label: 'Inventorius', sub: [] },
+		{ route: '/(app)/account', label: 'Paskyra', sub: ['/(app)/questionnaire'] }
+	];
+
+	const current = (link: (typeof links)[number]) =>
+		page.route.id === link.route ? 'page' : link.sub.includes(page.route.id ?? '') ? 'true' : undefined;
 </script>
 
 <header class="container app-header">
 	<Brand />
 	<nav aria-label="Pagrindinis meniu">
 		{#each links as link (link.route)}
-			<a href={resolve(link.route)} aria-current={page.route.id === link.route ? 'page' : undefined}>
+			<a href={resolve(link.route)} aria-current={current(link)}>
 				{link.label}
 			</a>
 		{/each}
@@ -55,7 +60,7 @@
 		text-decoration: none;
 	}
 	nav a:hover,
-	nav a[aria-current='page'] {
+	nav a[aria-current] {
 		color: var(--c-primary);
 		text-decoration: underline;
 		text-decoration-thickness: 2px;

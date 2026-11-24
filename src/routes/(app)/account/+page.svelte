@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
+	import { FITNESS_LEVEL_LABELS } from '#lib/fitness.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -13,6 +15,22 @@
 	<dt>El. paštas</dt>
 	<dd>{data.user.email}</dd>
 </dl>
+
+<section aria-labelledby="fitness-title">
+	<h2 id="fitness-title">Fizinio pasirengimo klausimynas</h2>
+	{#if data.fitnessLevel}
+		<p>
+			Tavo fizinio pasirengimo lygis: <strong>{FITNESS_LEVEL_LABELS[data.fitnessLevel]}</strong>.
+		</p>
+		<a class="button button-secondary" href={resolve('/(app)/questionnaire')}>Keisti atsakymus</a>
+	{:else}
+		<p>
+			Klausimynas dar neužpildytas. Atsakyk į du trumpus klausimus, kad rekomendacijose galėtume
+			įvertinti, ar žygis tau ne per sunkus.
+		</p>
+		<a class="button" href={resolve('/(app)/questionnaire')}>Užpildyti klausimyną</a>
+	{/if}
+</section>
 
 <section aria-labelledby="delete-title">
 	<h2 id="delete-title">Paskyros ištrynimas</h2>
