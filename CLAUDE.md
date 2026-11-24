@@ -373,14 +373,13 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 
 ## Open decisions (not in the spec — decide, then record the answer here)
 
-1. **"Far" departure date** threshold for the weather warning.
-2. **Local vision model**: runs `ggml-org/Qwen2.5-VL-3B-Instruct-GGUF` (llama-server at `LLAMA_URL`, API key `LLAMA_API_KEY`).
+1. **Local vision model**: runs `ggml-org/Qwen2.5-VL-3B-Instruct-GGUF` (llama-server at `LLAMA_URL`, API key `LLAMA_API_KEY`).
    Prompt + JSON schema in `src/lib/server/llama_api/recognition.ts`. Still open: model choice final? Real test
    (2026-11-24, 1 slot, 4096 ctx): a new photo ~20 s (mostly the image step; a 12 MP JPEG took 29.5 s, near the 30 s timeout),
    the same photo again ~3 s. With the English options it named boots, sleeping bag, tent and torch right and caught blurry and
    dark photos, but missed a photo with three items and called a landscape "BLURRY". A longer prompt with app context made it worse.
-3. **PDF library** (must keep output ≤ 1 MB).
-4. **Spec conflict**: UC-12's privacy text lists item photos as sent to the external AI, but the architecture keeps photos
+2. **PDF library** (must keep output ≤ 1 MB).
+3. **Spec conflict**: UC-12's privacy text lists item photos as sent to the external AI, but the architecture keeps photos
    on the local model. The registration text already follows the architecture.
 4. **Not built yet from UC-12**: withdrawing consent in account settings (FR-10), and making users re-accept when
    `PRIVACY_POLICY_VERSION` changes (sequence diagram 18). Both are needed before the AI features (UC-3, UC-7) send any data.
