@@ -1,42 +1,49 @@
-// UC-3 step 1: check an uploaded photo; convert it to a small WebP for the browser preview.
-// Everything happens in memory: the photo is never written to disk or the database (FR-25).
-import decodeHeic from 'heic-decode';
+// UC-3: check an uploaded photo and re-encode it for the browser preview and the model. In memory only (FR-25).
+import libheif, { type HeifImage } from 'libheif-js/wasm-bundle.js';
 import sharp from 'sharp';
 import { PHOTO_MAX_BYTES } from '#lib/domain.ts';
 
-// ponytail: 1024 px on the long side is enough to see what an item is, and it keeps the preview light on slow networks.
 const MAX_SIDE = 1024;
-// HEIC is decoded to raw pixels (4 bytes each) before sharp sees it. This caps what one upload can make us allocate (~400 MB).
-const HEIC_MAX_PIXELS = 100_000_000;
+// A small file can declare a huge image. 48 MP phone photos still fit.
+const MAX_PIXELS = 50_000_000;
 
-/** The photo can't be used. The message is shown to the user as-is. */
+/** Its message is shown to the user. */
 export class PhotoError extends Error {}
 
 const ascii = (bytes: Uint8Array, from: number, to: number) => String.fromCharCode(...bytes.subarray(from, to));
 const HEIC_BRANDS = ['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1'];
 
-/** By content, not by file name or the type the browser sends (both can lie, and HEIC often has no type at all). */
-function detectFormat(bytes: Uint8Array) {
+function detectFormat(bytes: Uint8Array): 'jpeg' | 'png' | 'heic' | null {
 	if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'jpeg';
 	if (ascii(bytes, 0, 8) === '\x89PNG\r\n\x1a\n') return 'png';
 	if (ascii(bytes, 4, 8) === 'ftyp' && HEIC_BRANDS.includes(ascii(bytes, 8, 12))) return 'heic';
 	return null;
 }
 
-// sharp's prebuilt binaries can't decode HEIC (HEVC patents), so libheif (WebAssembly) decodes it to raw pixels first.
+// sharp's prebuilt binaries can't read HEIC. libheif is called directly, not through heic-decode, which leaks
+// libheif's memory on files it can't parse.
 async function heicToSharp(bytes: Uint8Array) {
-	const images = await decodeHeic.all({ buffer: bytes });
+	await libheif.ready;
+	const decoder = new libheif.HeifDecoder();
+	let images: HeifImage[] = [];
 	try {
-		const { width, height, decode } = images[0]; // the primary image; others are burst/depth frames
-		if (width * height > HEIC_MAX_PIXELS) throw new Error(`HEIC too large: ${width}x${height}`);
-		const { data } = await decode();
+		images = decoder.decode(bytes);
+		if (!images[0]) throw new Error('no HEIF image');
+		const width = images[0].get_width();
+		const height = images[0].get_height();
+		if (width * height > MAX_PIXELS) throw new Error(`HEIC too large: ${width}x${height}`);
+		const data = new Uint8ClampedArray(width * height * 4);
+		await new Promise((resolve, reject) =>
+			images[0].display({ data, width, height }, (done) => (done ? resolve(done) : reject(new Error('HEIF decoding failed'))))
+		);
 		return sharp(data, { raw: { width, height, channels: 4 } });
 	} finally {
-		images.dispose();
+		for (const image of images) image.free();
+		decoder.decoder?.delete();
 	}
 }
 
-/** Checks one uploaded photo (JPG, PNG or HEIC, at most 10 MB, FR-16) and returns its bytes as sent. Throws PhotoError. */
+/** JPG, PNG or HEIC up to 10 MB (FR-16), checked by content. */
 export async function readPhoto(file: FormDataEntryValue | null) {
 	if (!(file instanceof File) || !file.size) throw new PhotoError('Pasirink nuotrauką.');
 	if (file.size > PHOTO_MAX_BYTES) throw new PhotoError('Nuotrauka per didelė. Įkelk nuotrauką iki 10 MB.');
@@ -47,23 +54,32 @@ export async function readPhoto(file: FormDataEntryValue | null) {
 }
 
 export type Photo = Awaited<ReturnType<typeof readPhoto>>;
+/** llama-server reads only JPG and PNG. */
+export type ModelPhoto = Photo & { format: 'jpeg' | 'png' };
 
-/**
- * readPhoto, then the photo as WebP: upright, at most MAX_SIDE px, without metadata (no GPS location leaves the server).
- * Only the browser preview uses it now: llama-server can't read WebP. Throws PhotoError.
- */
-export async function photoToWebp(file: FormDataEntryValue | null) {
-	const { bytes, format } = await readPhoto(file);
+/** Upright, at most MAX_SIDE px, without metadata (no GPS). */
+async function convert({ bytes, format }: Photo, to: 'webp' | 'png' | 'jpeg') {
 	try {
-		const image = format === 'heic' ? await heicToSharp(bytes) : sharp(bytes);
-		return await image
-			.rotate() // phones save photos sideways plus an EXIF orientation flag; bake it in
-			.resize(MAX_SIDE, MAX_SIDE, { fit: 'inside', withoutEnlargement: true })
-			.webp({ quality: 80 })
-			.toBuffer(); // sharp drops EXIF/GPS unless asked to keep it
+		const image = format === 'heic' ? await heicToSharp(bytes) : sharp(bytes, { limitInputPixels: MAX_PIXELS });
+		image.rotate().resize(MAX_SIDE, MAX_SIDE, { fit: 'inside', withoutEnlargement: true });
+		const encoded =
+			to === 'webp'
+				? image.webp({ quality: 80 })
+				: to === 'png'
+					? image.flatten({ background: '#ffffff' }).png()
+					: image.jpeg({ quality: 90 });
+		return await encoded.toBuffer();
 	} catch (error) {
 		throw new PhotoError('Nepavyko perskaityti nuotraukos. Gal failas sugadintas? Pabandyk kitą nuotrauką.', {
 			cause: error
 		});
 	}
+}
+
+export const photoToWebp = async (file: FormDataEntryValue | null) => convert(await readPhoto(file), 'webp');
+
+/** JPG stays JPG, PNG and HEIC become PNG. Always re-encoded, so no uploaded file reaches the model device as is. */
+export async function photoForModel(photo: Photo): Promise<ModelPhoto> {
+	const format = photo.format === 'jpeg' ? 'jpeg' : 'png';
+	return { bytes: new Uint8Array(await convert(photo, format)), format };
 }

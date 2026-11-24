@@ -2,7 +2,7 @@
 	import { applyAction, enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import ItemFields from '#lib/components/ItemFields.svelte';
-	import { attributeText, fold, groupAttributes, itemFormValues } from '#lib/validation.ts';
+	import { attributeText, fold, groupAttributes, itemFormValues, type ItemFormValues } from '#lib/validation.ts';
 	import {
 		CATEGORY_LABELS,
 		ITEM_CATEGORIES,
@@ -17,24 +17,20 @@
 	let deleteDialog: HTMLDialogElement;
 	let toDelete: InventoryItem | undefined = $state();
 
-	// UC-2 + UC-3 in one popup: the text form by default, "Pridėti iš nuotraukos" beside it. A recognised item
-	// pre-fills the same text form (team decision 2026-11-24, replaces the per-attribute review).
 	let addDialog: HTMLDialogElement;
 	let addForm: HTMLFormElement;
 	let mode: 'text' | 'photo' = $state('text');
-	let ai: { confidence: number } | null = $state(null); // set while the text form holds what the model recognised
-	const emptyValues = { name: '', category: '', suitability: [], attributes: '' };
-	const addValues = $derived(
-		form?.values ?? (form?.recognized ? itemFormValues({ suitability: [], ...form.recognized }) : emptyValues)
-	);
-	let recognizing = $state(false); // the model can take up to 30 s
+	let ai: { confidence: number; regenerationsLeft: number } | null = $state(null);
+	const emptyValues: ItemFormValues = { name: '', category: '', suitability: [], attributes: '' };
+	let prefill = $state.raw(emptyValues);
+	const addValues = $derived(form?.values ?? prefill);
+	let recognizing = $state(false);
+	let regenerateNote = $state('');
 
-	// FR-17: preview the chosen photo before it is sent; picking another one replaces it
 	let photoInput: HTMLInputElement;
-	let preview = $state(''); // object URL, only in this browser
-	let previewFile: File | undefined; // the photo behind `preview`, until the server has had to convert it
+	let preview = $state('');
+	let previewFile: File | undefined;
 	let converting = $state(false);
-	// Message from the browser's own checks; '' hides the server's old one once a new photo is picked
 	let photoNote: string | undefined = $state();
 	const photoError = $derived(photoNote ?? form?.photoError);
 	const retry = $derived(photoNote === undefined && !!form?.retry);
@@ -46,17 +42,17 @@
 		previewFile = file;
 		converting = false;
 		photoNote = '';
+		if (ai) ai.regenerationsLeft = 0;
 		if (!file) return;
-		// FR-16 before uploading: saves a long wait on a slow connection
 		if (file.size > PHOTO_MAX_BYTES) {
 			photoNote = 'Nuotrauka per didelė. Įkelk nuotrauką iki 10 MB.';
 			photoInput.value = '';
 		} else preview = URL.createObjectURL(file);
 	}
-	// The browser can't show this photo (HEIC outside Safari), so the server converts it.
+	// HEIC outside Safari
 	async function convertPreview() {
 		const file = previewFile;
-		previewFile = undefined; // once: a WebP that still won't show isn't retried
+		previewFile = undefined;
 		if (!file) return;
 		converting = true;
 		const body = new FormData();
@@ -66,11 +62,11 @@
 		try {
 			const response = await fetch(resolve('/(app)/inventory/preview'), { method: 'POST', body });
 			if (response.ok) url = URL.createObjectURL(await response.blob());
-			else if (response.status === 400) note = await response.text(); // e.g. not a photo at all
+			else if (response.status === 400) note = await response.text();
 		} catch {
-			// offline: the note above says so
+			// offline: `note` says so
 		}
-		if (photoInput.files?.[0] !== file) return URL.revokeObjectURL(url); // another photo was picked meanwhile
+		if (photoInput.files?.[0] !== file) return URL.revokeObjectURL(url);
 		converting = false;
 		preview = url;
 		if (!url) {
@@ -79,29 +75,25 @@
 		}
 	}
 
-	// Closing the popup (Atšaukti, ✕, Esc, or after saving) drops the draft: a recognised item that wasn't saved is
-	// gone (FR-25), and the next item starts from the text form.
-	// ponytail: mode switching needs JS. Without it the popup still opens (command attributes) with the text form only.
 	async function resetAdd() {
 		mode = 'text';
 		ai = null;
+		prefill = emptyValues;
+		regenerateNote = '';
 		galleryHelp = false;
 		photoInput.value = '';
 		showPhoto(undefined);
 		addForm.reset();
-		// forget errors and the recognised item, but keep "pridėtas" after a save (`location` only matters for redirects)
-		if (form?.values || form?.recognized || form?.photoError || form?.notRecognized) {
+		if (form?.values || form?.recognized || form?.photoError || form?.badPhoto) {
 			await applyAction({ type: 'success', status: 200, location: location.href });
 		}
 	}
 
-	// FR-27: search, filter and sort in the browser, so a slow connection costs no extra requests
 	let query = $state('');
 	let category = $state('');
-	let tag = $state(''); // a tag from the inventory, by tagKey()
+	let tag = $state('');
 	let sort = $state('asc');
-	const tagKey = (a: { name: string; value: string }) => fold(attributeText(a)); // "Spalva: Ruda" = "spalva: ruda"
-	// Every tag in the inventory once. For the filter: grouped by name (<optgroup>), A–Ž, tags without a value last.
+	const tagKey = (a: { name: string; value: string }) => fold(attributeText(a));
 	const inventoryTags = $derived(new Map(data.items.flatMap((i) => i.attributes).map((a) => [tagKey(a), a])));
 	const tagGroups = $derived(
 		Map.groupBy(
@@ -111,7 +103,7 @@
 			(a) => (a.value ? fold(a.name) : '')
 		)
 	);
-	const tagFilter = $derived(inventoryTags.has(tag) ? tag : ''); // a tag whose last item was deleted stops filtering
+	const tagFilter = $derived(inventoryTags.has(tag) ? tag : '');
 	const shown = $derived.by(() => {
 		const q = fold(query.trim());
 		const items = data.items.filter(
@@ -120,7 +112,7 @@
 				(!tagFilter || i.attributes.some((a) => tagKey(a) === tagFilter)) &&
 				fold(i.name).includes(q)
 		);
-		return sort === 'desc' ? items.reverse() : items; // the server sorts A–Ž; filter() already made a copy
+		return sort === 'desc' ? items.reverse() : items;
 	});
 </script>
 
@@ -162,10 +154,25 @@
 	</div>
 
 	<div class="add-body">
-		<!-- the other way to add: beside the form on wide screens, above it on phones -->
 		<aside class="add-side">
 			{#if mode === 'text'}
 				{#if ai && preview}<img src={preview} alt="Nuotrauka, iš kurios užpildyti laukai" />{/if}
+				{#if ai && ai.regenerationsLeft > 0}
+					<button
+						class="button-secondary"
+						form="recognize-form"
+						name="regenerate"
+						value="1"
+						disabled={recognizing}
+						aria-describedby="regenerate-hint"
+					>
+						{#if recognizing}<span class="spinner" aria-hidden="true"></span> Generuojama…{:else}Generuoti iš naujo{/if}
+					</button>
+					<p class="field-hint" id="regenerate-hint">
+						DI dar kartą pažiūrės į tą pačią nuotrauką ir užpildys laukus iš naujo. Liko kartų: {ai.regenerationsLeft}.
+					</p>
+				{/if}
+				{#if regenerateNote}<p class="field-error" role="alert">{regenerateNote}</p>{/if}
 				<p>
 					{ai
 						? 'Ne tas daiktas? Įkelk kitą nuotrauką.'
@@ -183,30 +190,36 @@
 			{/if}
 		</aside>
 
-		<!-- UC-3: one photo; the server checks type and size and converts it -->
 		<form
+			id="recognize-form"
 			hidden={mode !== 'photo'}
 			method="POST"
 			action="?/recognize"
 			enctype="multipart/form-data"
 			novalidate
-			use:enhance={() => {
+			use:enhance={({ formData }) => {
+				const again = formData.has('regenerate');
 				recognizing = true;
-				photoNote = undefined; // show what the server says about this attempt
-				return async ({ update }) => {
-					await update({ reset: false }); // keep the photo for a retry or another look
+				photoNote = undefined;
+				regenerateNote = '';
+				return async ({ result, update }) => {
 					recognizing = false;
-					if (!form?.recognized) return;
-					ai = { confidence: form.recognized.confidence };
-					mode = 'text';
-					setTimeout(() => document.getElementById('item-name')?.focus()); // after SvelteKit's focus reset
+					if (!addDialog.open) return; // closed while waiting
+					await update({ reset: false });
+					if (form?.recognized) {
+						prefill = itemFormValues({ suitability: [], ...form.recognized });
+						ai = { confidence: form.recognized.confidence, regenerationsLeft: form.regenerationsLeft };
+						mode = 'text';
+						if (!again) setTimeout(() => document.getElementById('item-name')?.focus());
+					} else if (again && ai) {
+						regenerateNote = form?.badPhoto ?? form?.photoError ?? 'Nepavyko. Bandyk dar kartą.';
+						ai.regenerationsLeft = result.type === 'failure' && !form?.retry ? 0 : ai.regenerationsLeft - 1;
+					}
 				};
 			}}
 		>
-			{#if form?.notRecognized}
-				<p class="notice notice-warning" role="status">
-					Daikto atpažinti nepavyko. Fotografuok šviesioje vietoje, po vieną daiktą kadre, arba įvesk daiktą ranka.
-				</p>
+			{#if form?.badPhoto}
+				<p class="notice notice-warning" role="status">{form.badPhoto} Arba įvesk daiktą ranka.</p>
 			{/if}
 			<div class="field">
 				<label for="item-photo">Įkelti iš galerijos</label>
@@ -234,9 +247,7 @@
 					<figcaption class="field-hint">Ne ta nuotrauka? Pasirink kitą – ji pakeis šią.</figcaption>
 				</figure>
 			{/if}
-			<!-- FR-18 -->
-			<!-- ponytail: a page can't ask whether gallery access was denied. A closed picker ("cancel") is the closest
-			     signal, so it opens this help; the help is always one tap away for pickers that never open at all. -->
+			<!-- a page can't ask whether gallery access was denied; a cancelled picker is the closest signal -->
 			<details class="gallery-help" bind:open={galleryHelp}>
 				<summary>Neatsidaro galerija?</summary>
 				<p>
@@ -264,7 +275,6 @@
 			</div>
 		</form>
 
-		<!-- UC-2, also the review of a recognised item. novalidate: the server checks everything and answers in Lithuanian -->
 		<form
 			hidden={mode !== 'text'}
 			bind:this={addForm}
@@ -274,13 +284,14 @@
 			use:enhance={() =>
 				async ({ result, update }) => {
 					await update();
-					if (result.type === 'success') addDialog.close(); // resetAdd does the rest
+					if (result.type === 'success') addDialog.close();
 				}}
 		>
 			{#if ai}
 				<p class="notice" role="status">
 					Laukus užpildė dirbtinis intelektas (tikrumas {ai.confidence} %). Patikrink ir pataisyk juos: į inventorių
 					daiktas pateks tik paspaudus „Išsaugoti“.
+					{#if !prefill.name}Daikto pavadinimą įrašyk pats.{/if}
 					{#if ai.confidence < RECOGNITION_CHECK_BELOW}<span class="tag tag-warning">Patikrinkite</span>{/if}
 				</p>
 			{/if}
@@ -326,7 +337,6 @@
 				{#each [...tagGroups] as [group, attributes] (group)}
 					<optgroup label={group ? attributes[0].name : 'Be reikšmės (taip)'}>
 						{#each attributes as attribute (tagKey(attribute))}
-							<!-- full text: the closed <select> shows only the option, and "ruda" alone says little -->
 							<option value={tagKey(attribute)}>{attributeText(attribute)}</option>
 						{/each}
 					</optgroup>

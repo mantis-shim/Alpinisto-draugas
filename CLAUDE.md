@@ -54,7 +54,7 @@ npm run check:auth            # self-check: password hashing + registration rule
 docker compose exec app npm run check:inventory   # self-check: inventory CRUD + item form rules against the dev DB (cleans up after itself)
 npm ci                        # on the host too: the container's node_modules is a separate volume, so the editor needs its own copy for types
 npm run check:fitness         # self-check: questionnaire validation + fitness level formula (plain Node, no DB)
-docker compose exec app npm run check:photo         # self-check: photo upload rules + WebP conversion (no DB)
+docker compose exec app npm run check:photo         # self-check: photo upload rules + WebP preview + HEIC -> PNG for the model (no DB)
 docker compose exec app npm run check:recognition   # self-check: llama-server request (fetch stubbed), answer checks, retries, every mock scenario, form pre-fill
 ```
 
@@ -73,10 +73,13 @@ docker compose exec app npm run check:recognition   # self-check: llama-server r
   UC-3 flow; `check:recognition` tests the same ones).
   The model sits behind `RecognitionModel` (`src/lib/server/llama_api/recognition.ts`): `llamaModel` is the real one, `mockModel` the stand-in.
 - A variable added to `src/env.ts` is only read when the dev server starts: `docker compose restart app` after adding one.
-- Photo uploads (UC-3): `src/lib/server/photo.ts` checks type/size by content (`readPhoto`). `photoToWebp` converts JPG/PNG/HEIC
-  to a ≤ 1024 px WebP in memory for the browser preview only (sharp; HEIC via `heic-decode`, because sharp's prebuilt binaries can't read it).
-  **llama-server can't read WebP**, so recognition sends JPG/PNG as uploaded and refuses HEIC for now (conversion call commented out in
-  the `?/recognize` action). Production needs `BODY_SIZE_LIMIT=11M` (adapter-node default is 512K).
+- Photo uploads (UC-3): `src/lib/server/photo.ts` checks type/size by content (`readPhoto`) and re-encodes every photo in
+  memory with sharp: upright, ≤ 1024 px, no metadata, at most 50 Mpx decoded (a small file can declare a huge image).
+  `photoToWebp` is the browser preview. **llama-server reads only JPG and PNG** (WebP/HEIC: HTTP 400), so `photoForModel` keeps
+  JPG as JPG and turns PNG and HEIC into PNG; no uploaded file reaches the model device as is (security review 2026-11-24).
+  HEIC is decoded with `libheif-js` directly (sharp's prebuilt binaries can't read it), not `heic-decode`, which leaked
+  libheif's memory on unreadable files. `scripts/fixtures/blank.heic` was made with pillow-heif (sharp can't write HEIC).
+  Production needs `BODY_SIZE_LIMIT=11M` (adapter-node default is 512K).
 - There's no production Docker setup yet (dev only by decision). Production target: Linux, Node runtime, HTTPS 443, Mongo
   and llama.cpp in an internal network.
 
@@ -157,7 +160,7 @@ FitnessLevel  = LOW | MEDIUM | HIGH   (UI: žemas / vidutinis / aukštas)
 | `/` | visitors | landing page; logged-in users are redirected to `/plan`; `/?deleted` shows "account deleted" |
 | `(auth)/login`, `(auth)/register` | visitors | UC-1 + UC-12 consent; logged-in users are redirected to `/plan` |
 | `(app)/plan` | logged in | trip planning (placeholder until UC-6) |
-| `(app)/inventory` | logged in | bright "Pridėti daiktą" button opens a `<dialog>`: UC-2 text form (`?/create`, duplicate warning) with "Pridėti iš nuotraukos" beside it (UC-3 `?/recognize` → "Generuoti" pre-fills the same text form) + UC-4 list with search/filter/sort in the browser, delete with a `<dialog>` (`?/delete`) |
+| `(app)/inventory` | logged in | bright "Pridėti daiktą" button opens a `<dialog>`: UC-2 text form (`?/create`, duplicate warning) with "Pridėti iš nuotraukos" beside it (UC-3 `?/recognize` → "Generuoti" pre-fills the same text form; "Generuoti iš naujo" beside the photo sends `regenerate`) + UC-4 list with search/filter/sort in the browser, delete with a `<dialog>` (`?/delete`) |
 | `(app)/inventory/preview` | logged in | `POST` a photo, get the WebP back: preview for photos the browser can't show (HEIC outside Safari) |
 | `(app)/inventory/[id]` | logged in | UC-4 edit one item; someone else's id gets the same 404 as a missing one |
 | `(app)/questionnaire` | logged in | fitness questionnaire: answers + assigned level, editable (UC-5). **Not in the header nav**: reached from `/account` ("Užpildyti klausimyną" / "Keisti atsakymus"), and the "Paskyra" nav link stays highlighted on it (team decision 2026-11-23, keeps the nav short). Link to it wherever UC-5 is offered (UC-7 2b). |
@@ -199,13 +202,22 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
   isn't (another 30 s, same answer): the user gets "Bandyti dar kartą".
 - Confidence < 70 %: tag the item "Patikrinkite".
 - Not recognised: tip "photograph in a bright place, one item per frame" and offer manual add (UC-2 form).
+  **Decided (Vincentas, 2026-11-24):** the model judges the photo first (`OK`/`BLURRY`/`TOO_DARK`/`SEVERAL_ITEMS`/`NO_GEAR`); a
+  bad photo gets its own tip (`PHOTO_PROBLEM_TIPS`) and a request for a better one. The model picks the item, colour and
+  material from **English options** that the app maps to fixed Lithuanian words (`ITEM_TYPES`, `COLOURS`, `MATERIALS`): asked for
+  Lithuanian text, the 3B model made up words and tags it couldn't see. "other" leaves the name empty for the user.
+- "Generuoti iš naujo" (Vincentas, 2026-11-24): after a **successful** first recognition, the same photo can be regenerated up to
+  5 times (`MAX_REGENERATIONS`). The server enforces it per user by a hash of the photo (in memory, never the photo), the page only
+  shows the button then. It resends the same request at a higher temperature, with the photo verdict fixed to OK and no "other":
+  llama-server still has the photo processed (prompt cache), so it takes ~3 s instead of ~20 s.
 - Show attributes next to the photo. Each attribute can be **confirmed / edited / rejected**, the name is editable, and there's a
   "Patvirtinti visus" button. Rejecting the whole item saves nothing. **Only confirmed items enter the inventory.**
   **Changed (Vincentas, 2026-11-24):** no per-attribute review. A recognised item pre-fills the normal add form (attributes one
   per tag, removable, new ones via "Pridėti požymį") next to the photo, with the confidence and "Patikrinkite". "Išsaugoti" confirms it,
   "Atšaukti" (closing the popup) rejects it and saves nothing.
 - Photos are processed and discarded, **never stored**.
-- HEIC: most browsers can't render it in `<img>`, so convert it before preview or model input (model input: not yet, see Running).
+- HEIC: most browsers can't render it in `<img>` and llama-server can't read it, so the server converts it: WebP for the preview,
+  PNG for the model (see Running).
 
 ### UC-4 View & manage inventory (US-10 Mantas, US-14 Naglis, S1) FR-26–30
 - List all items with name, category and suitability tags. Sort by name, filter by category, search by name.
@@ -349,7 +361,10 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 
 1. **"Far" departure date** threshold for the weather warning.
 2. **Local vision model**: runs `ggml-org/Qwen2.5-VL-3B-Instruct-GGUF` (llama-server at `LLAMA_URL`, API key `LLAMA_API_KEY`).
-   Prompt + JSON schema in `src/lib/server/llama_api/recognition.ts`. Still open: model choice final? HEIC/large photos (see Running).
+   Prompt + JSON schema in `src/lib/server/llama_api/recognition.ts`. Still open: model choice final? Real test
+   (2026-11-24, 1 slot, 4096 ctx): a new photo ~20 s (mostly the image step; a 12 MP JPEG took 29.5 s, near the 30 s timeout),
+   the same photo again ~3 s. With the English options it named boots, sleeping bag, tent and torch right and caught blurry and
+   dark photos, but missed a photo with three items and called a landscape "BLURRY". A longer prompt with app context made it worse.
 3. **PDF library** (must keep output ≤ 1 MB).
 4. **Spec conflict**: UC-12's privacy text lists item photos as sent to the external AI, but the architecture keeps photos
    on the local model. The registration text already follows the architecture.

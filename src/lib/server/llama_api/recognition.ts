@@ -1,140 +1,203 @@
-// UC-3 step 2: ask the vision model what item is in the photo (FR-19), then check its answer.
-// The real model is llama-server (OpenAI-compatible API) on a separate team device (LLAMA_URL); the photo goes only
-// there, never to a third party. recognition-mocks.ts plays canned answers through the same seam (RecognitionModel).
-// The photo goes as uploaded (JPG/PNG): llama-server's image loader (stb_image) can't read WebP.
-// No `$app/env` import here: the caller passes the config, so scripts/check-recognition.ts runs this with plain Node.
-import { ITEM_CATEGORIES, ITEM_LIMITS, type ItemCategory } from '#lib/domain.ts';
-import { attributeName, attributeValue } from '#lib/validation.ts';
-import type { Photo } from '#lib/server/photo.ts';
+// UC-3: recognise an item in a photo with llama-server on the team's model device (LLAMA_URL).
+import { createHash } from 'node:crypto';
+import { ITEM_CATEGORIES, type ItemCategory } from '#lib/domain.ts';
+import type { ModelPhoto } from '#lib/server/photo.ts';
 
-/** Team decision 2026-11-23: wait up to 30 s, not the spec's 10 s (NŠ-1). The local model needs longer. */
 export const RECOGNITION_TIMEOUT_MS = 30_000;
 
-/** The contract: the JSON the model answers with (SCHEMA below). Untrusted until parseRecognition has checked it. */
-export type ModelAnswer = {
-	recognized: boolean; // false: no single clear item in the photo, the other fields are then empty
-	name: string;
-	category: ItemCategory;
-	attributes: { name: string; value: string }[]; // value '' for tags such as "neperšlampamas"
-	confidence: number; // 0–100, as the model reports it (not calibrated)
+export const PHOTO_VERDICTS = ['OK', 'BLURRY', 'TOO_DARK', 'SEVERAL_ITEMS', 'NO_GEAR'] as const;
+export type PhotoProblem = Exclude<(typeof PHOTO_VERDICTS)[number], 'OK'>;
+
+export const PHOTO_PROBLEM_TIPS: Record<PhotoProblem, string> = {
+	BLURRY: 'Nuotrauka neryški, daikto neįžiūrėti. Laikyk telefoną ramiai, palauk, kol vaizdas taps ryškus, ir fotografuok dar kartą.',
+	TOO_DARK: 'Nuotrauka per tamsi. Fotografuok daiktą šviesioje vietoje.',
+	SEVERAL_ITEMS: 'Nuotraukoje keli daiktai. Fotografuok po vieną daiktą kadre.',
+	NO_GEAR: 'Nuotraukoje neradome žygio ekipuotės. Fotografuok daiktą iš arčiau, šviesioje vietoje, po vieną kadre.'
 };
 
-/** A checked answer, ready for the review. */
-export type RecognizedItem = Omit<ModelAnswer, 'recognized'>;
+// The model picks English options and we write the Lithuanian: its own Lithuanian was made-up words.
+const ITEM_TYPES: Record<string, [name: string, category: ItemCategory]> = {
+	'hiking boots': ['Žygio batai', 'FOOTWEAR'],
+	'trail shoes': ['Žygio bateliai', 'FOOTWEAR'],
+	'hiking socks': ['Žygio kojinės', 'FOOTWEAR'],
+	backpack: ['Kuprinė', 'OTHER'],
+	'rain jacket': ['Neperšlampama striukė', 'CLOTHING'],
+	'fleece jacket': ['Flisinis džemperis', 'CLOTHING'],
+	'down jacket': ['Pūkinė striukė', 'CLOTHING'],
+	'thermal underwear': ['Termo apatiniai', 'CLOTHING'],
+	'hiking trousers': ['Žygio kelnės', 'CLOTHING'],
+	hat: ['Kepurė', 'CLOTHING'],
+	gloves: ['Pirštinės', 'CLOTHING'],
+	'sleeping bag': ['Miegmaišis', 'SLEEP'],
+	'sleeping mat': ['Kilimėlis', 'SLEEP'],
+	tent: ['Palapinė', 'SLEEP'],
+	map: ['Žemėlapis', 'NAVIGATION'],
+	compass: ['Kompasas', 'NAVIGATION'],
+	'GPS device': ['GPS imtuvas', 'NAVIGATION'],
+	headlamp: ['Galvos žibintuvėlis', 'TOOLS'],
+	flashlight: ['Žibintuvėlis', 'TOOLS'],
+	'first aid kit': ['Vaistinėlė', 'MEDICINE'],
+	sunscreen: ['Kremas nuo saulės', 'MEDICINE'],
+	'insect repellent': ['Priemonė nuo uodų', 'MEDICINE'],
+	'water bottle': ['Gertuvė', 'FOOD'],
+	thermos: ['Termosas', 'FOOD'],
+	'camping stove': ['Turistinė viryklė', 'FOOD'],
+	'cooking pot': ['Katiliukas', 'FOOD'],
+	'trekking poles': ['Žygio lazdos', 'TOOLS'],
+	'pocket knife': ['Kišeninis peilis', 'TOOLS'],
+	'power bank': ['Išorinė baterija', 'TOOLS'],
+	sunglasses: ['Saulės akiniai', 'OTHER']
+};
+const COLOURS: Record<string, string> = {
+	black: 'juoda',
+	white: 'balta',
+	grey: 'pilka',
+	brown: 'ruda',
+	beige: 'smėlio',
+	red: 'raudona',
+	orange: 'oranžinė',
+	yellow: 'geltona',
+	green: 'žalia',
+	blue: 'mėlyna',
+	purple: 'violetinė',
+	pink: 'rožinė',
+	multicoloured: 'marga'
+};
+const MATERIALS: Record<string, string> = {
+	leather: 'oda',
+	'synthetic fabric': 'sintetinis audinys',
+	fleece: 'flisas',
+	wool: 'vilna',
+	down: 'pūkai',
+	cotton: 'medvilnė',
+	plastic: 'plastikas',
+	metal: 'metalas',
+	rubber: 'guma'
+};
 
-/**
- * The one seam between the app and the model: the photo in, the model's raw answer (ModelAnswer as JSON text) out.
- * llamaModel is the real one, mockModel (recognition-mocks.ts) the stand-in. Throws ModelUnavailable when the model
- * can't be reached (retried), a TimeoutError DOMException, or any other error (not retried).
- */
-export type RecognitionModel = (photo: Photo) => Promise<string>;
+/** The model's raw answer, untrusted until parseRecognition. */
+export type ModelAnswer = {
+	photo: (typeof PHOTO_VERDICTS)[number];
+	item: string;
+	category: ItemCategory; // only used for "other"
+	colour: string;
+	material: string;
+	confidence: number;
+};
 
-/** The model device can't be reached or is busy (network error, HTTP 5xx). Worth one more try. */
+export type RecognizedItem = {
+	name: string; // '' when the model said "other"
+	category: ItemCategory;
+	attributes: { name: string; value: string }[];
+	confidence: number;
+};
+
+/** llamaModel or mockModel. Throws ModelUnavailable (retried), a TimeoutError or any other error. */
+export type RecognitionModel = (photo: ModelPhoto, regenerate?: boolean) => Promise<string>;
+
 export class ModelUnavailable extends Error {}
 
-/** Recognition didn't work (server down, timeout, broken answer). The message is shown to the user as-is. */
+/** Its message is shown to the user. */
 export class RecognitionError extends Error {}
 
 const FAILED = 'Nepavyko atpažinti daikto. Bandyk dar kartą arba pridėk daiktą ranka.';
 const TOO_SLOW = 'Atpažinimas užtruko per ilgai. Bandyk dar kartą arba pridėk daiktą ranka.';
-const MAX_ATTRIBUTES = 8; // ponytail: what a photo shows; ITEM_LIMITS.attributes (30) is for hand-typed items
-/** Calls per photo when the model can't be reached. A timeout is not retried: that would be another 30 s. */
 export const MAX_ATTEMPTS = 2;
+export const MAX_REGENERATIONS = 5;
+const REGENERATE_TEMPERATURE = 0.6; // 0.8 turned boots into sunglasses
+const REGENERATE_WITHIN_MS = 30 * 60_000;
 
-// Instructions in English (small vision models follow them better), answers in Lithuanian.
-const PROMPT = `You identify one piece of hiking gear in a photo for a beginner hiker's inventory app.
+// Short on purpose: a longer prompt with more context made this 3B model worse.
+const PROMPT = `You look at photos for a hiking app. A beginner hiker photographs one piece of their own gear to add it to their gear list; they check your answer before saving it.
 Answer only with JSON that matches the schema.
-- recognized: false when there is no single clear item (several items, blurry, too dark, not gear). Then leave the other fields empty.
-- name: the short common Lithuanian name of the item, e.g. "Žygio batai", "Miegmaišis", "Galvos žibintuvėlis".
-- category: FOOTWEAR; CLOTHING; SLEEP (tent, sleeping bag, mat); NAVIGATION; MEDICINE (first aid); FOOD (food, water, bottles); TOOLS; OTHER.
-- attributes: only what you can see, in Lithuanian, e.g. {"name":"spalva","value":"ruda"}, {"name":"medžiaga","value":"oda"}. Tags such as "neperšlampamas" get value "". Never guess what is not visible.
-- confidence: 0-100, how sure you are about the name and the category.`;
+- photo: OK when one item is clearly visible. BLURRY: out of focus, the item can't be made out. TOO_DARK: too dark to see the item. SEVERAL_ITEMS: two or more different items and none is clearly the main one; a pair of boots or gloves is one item. NO_GEAR: no hiking gear at all, e.g. a landscape, a person or a room.
+- item: what the item is; "other" if no option fits.
+- category: FOOTWEAR, CLOTHING, SLEEP (tent, sleeping bag, mat), NAVIGATION, MEDICINE (first aid, sunscreen), FOOD (food, water, cooking), TOOLS, OTHER.
+- colour, material: the main ones you can see; "unclear" if you can't tell.
+- confidence: 0-100, how sure you are about item. 90 or more only when it is unmistakable.`;
 
 const SCHEMA = {
 	type: 'object',
-	required: ['recognized', 'name', 'category', 'attributes', 'confidence'],
+	required: ['photo', 'item', 'category', 'colour', 'material', 'confidence'],
 	properties: {
-		recognized: { type: 'boolean' },
-		name: { type: 'string', maxLength: ITEM_LIMITS.name },
+		photo: { enum: PHOTO_VERDICTS },
+		item: { enum: [...Object.keys(ITEM_TYPES), 'other'] },
 		category: { enum: ITEM_CATEGORIES },
-		attributes: {
-			type: 'array',
-			maxItems: MAX_ATTRIBUTES,
-			items: {
-				type: 'object',
-				required: ['name', 'value'],
-				properties: { name: { type: 'string' }, value: { type: 'string' } }
-			}
-		},
+		colour: { enum: [...Object.keys(COLOURS), 'unclear'] },
+		material: { enum: [...Object.keys(MATERIALS), 'unclear'] },
 		confidence: { type: 'integer', minimum: 0, maximum: 100 }
 	}
 };
+// The photo already passed, and "other" would empty the name the user has.
+const REGENERATE_SCHEMA = {
+	...SCHEMA,
+	properties: { ...SCHEMA.properties, photo: { enum: ['OK'] }, item: { enum: Object.keys(ITEM_TYPES) } }
+};
 
-/** POST /v1/chat/completions body (OpenAI format). The schema becomes a grammar in llama-server, so the reply is JSON. */
-export const recognitionRequest = ({ bytes, format }: Photo) => ({
+// A regeneration sends the same messages, so llama-server's prompt cache skips the image step (~3 s instead of ~20 s).
+export const recognitionRequest = ({ bytes, format }: ModelPhoto, regenerate = false) => ({
 	messages: [
 		{ role: 'system', content: PROMPT },
 		{
 			role: 'user',
 			content: [
 				{ type: 'image_url', image_url: { url: `data:image/${format};base64,${Buffer.from(bytes).toString('base64')}` } },
-				{ type: 'text', text: 'Koks daiktas šioje nuotraukoje?' }
+				{ type: 'text', text: 'What is in this photo?' }
 			]
 		}
 	],
-	response_format: { type: 'json_schema', json_schema: { name: 'item', schema: SCHEMA } },
-	temperature: 0.1,
-	max_tokens: 400
+	response_format: { type: 'json_schema', json_schema: { name: 'item', schema: regenerate ? REGENERATE_SCHEMA : SCHEMA } },
+	temperature: regenerate ? REGENERATE_TEMPERATURE : 0.1,
+	cache_prompt: true,
+	max_tokens: 200
 });
 
-const text = (value: unknown, max: number) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
+const pick = (options: Record<string, string>, key: unknown) =>
+	typeof key === 'string' && Object.hasOwn(options, key) ? options[key] : undefined;
 
-/** Checks the model's JSON (it's still untrusted). Null when the model couldn't tell what the item is. */
-export function parseRecognition(content: string): RecognizedItem | null {
+export function parseRecognition(content: string): RecognizedItem | PhotoProblem {
 	let answer;
 	try {
 		answer = JSON.parse(content);
 	} catch (error) {
 		throw new RecognitionError(FAILED, { cause: error });
 	}
-	// no verdict at all is a broken answer, not "not recognised"; the other fields are salvaged below
-	if (typeof answer?.recognized !== 'boolean') {
-		throw new RecognitionError(FAILED, { cause: new Error(`answer without "recognized": ${content.slice(0, 300)}`) });
+	if (!PHOTO_VERDICTS.includes(answer?.photo)) {
+		throw new RecognitionError(FAILED, { cause: new Error(`answer without "photo": ${content.slice(0, 300)}`) });
 	}
-	const name = text(answer.recognized && answer.name, ITEM_LIMITS.name);
-	if (!name) return null;
-	const category = ITEM_CATEGORIES.includes(answer.category) ? answer.category : 'OTHER';
-	const attributes = (Array.isArray(answer.attributes) ? answer.attributes : [])
-		.map((a: { name?: unknown; value?: unknown }) => ({
-			name: attributeName(text(a?.name, ITEM_LIMITS.attributeText)),
-			value: attributeValue(text(a?.value, ITEM_LIMITS.attributeText)) // a model's "true" = a plain tag
-		}))
-		.filter((a: { name: string }) => a.name)
-		.slice(0, MAX_ATTRIBUTES);
+	if (answer.photo !== 'OK') return answer.photo;
+	const [name, category] = (typeof answer.item === 'string' && Object.hasOwn(ITEM_TYPES, answer.item)
+		? ITEM_TYPES[answer.item]
+		: ['', ITEM_CATEGORIES.includes(answer.category) ? answer.category : 'OTHER']) as [string, ItemCategory];
+	const colour = pick(COLOURS, answer.colour);
+	const material = pick(MATERIALS, answer.material);
+	const attributes = [
+		...(colour ? [{ name: 'spalva', value: colour }] : []),
+		...(material ? [{ name: 'medžiaga', value: material }] : [])
+	];
 	const confidence = Number.isFinite(answer.confidence) ? Math.round(Math.min(100, Math.max(0, answer.confidence))) : 0;
 	return { name, category, attributes, confidence };
 }
 
-/** The real model: llama-server on the model device. */
 export const llamaModel =
 	(llama: { url?: string; apiKey?: string }): RecognitionModel =>
-	async (photo) => {
+	async (photo, regenerate) => {
 		if (!llama.url) throw new Error('LLAMA_URL is not set');
 		let response;
 		try {
 			response = await fetch(`${llama.url.replace(/\/+$/, '')}/v1/chat/completions`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json', ...(llama.apiKey && { authorization: `Bearer ${llama.apiKey}` }) },
-				body: JSON.stringify(recognitionRequest(photo)),
-				signal: AbortSignal.timeout(RECOGNITION_TIMEOUT_MS) // covers reading the body too
+				body: JSON.stringify(recognitionRequest(photo, regenerate)),
+				signal: AbortSignal.timeout(RECOGNITION_TIMEOUT_MS)
 			});
 		} catch (error) {
-			// fetch fails with a TypeError when the device can't be reached; a timeout is a DOMException and passes through
+			// TypeError: device unreachable. A timeout passes through.
 			throw error instanceof TypeError ? new ModelUnavailable('llama-server unreachable', { cause: error }) : error;
 		}
 		if (!response.ok) {
 			const message = `llama-server HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`;
-			throw response.status >= 500 ? new ModelUnavailable(message) : new Error(message); // 503 while the model loads
+			throw response.status >= 500 ? new ModelUnavailable(message) : new Error(message);
 		}
 		const body = await response.json();
 		const choice = body?.choices?.[0];
@@ -144,18 +207,39 @@ export const llamaModel =
 		return choice.message.content;
 	};
 
-/** Asks the model what item is in the photo. Null if it can't tell (FR-21). Throws RecognitionError. */
-export async function recognizeItem(photo: Photo, model: RecognitionModel): Promise<RecognizedItem | null> {
+export async function recognizeItem(
+	photo: ModelPhoto,
+	model: RecognitionModel,
+	regenerate = false
+): Promise<RecognizedItem | PhotoProblem> {
 	for (let attempt = 1; ; attempt++) {
 		let content;
 		try {
-			content = await model(photo);
+			content = await model(photo, regenerate);
 		} catch (error) {
-			// ponytail: retries at once, which covers a dropped connection. Add a short wait if the device often answers 503.
 			if (error instanceof ModelUnavailable && attempt < MAX_ATTEMPTS) continue;
 			const slow = error instanceof DOMException && error.name === 'TimeoutError';
 			throw new RecognitionError(slow ? TOO_SLOW : FAILED, { cause: error });
 		}
-		return parseRecognition(content); // a broken answer isn't retried: the same photo gets the same answer
+		return parseRecognition(content);
 	}
+}
+
+// Per user: a hash of the last successfully recognised photo, never the photo itself.
+// ponytail: in memory, so a restart forgets it; several server processes would need the sessions collection.
+const lastRecognized = new Map<string, { photoHash: string; left: number; until: number }>();
+const hash = (photo: { bytes: Uint8Array }) => createHash('sha256').update(photo.bytes).digest('base64url');
+
+export const forgetRecognition = (userId: string) => lastRecognized.delete(userId);
+
+export function allowRegeneration(userId: string, photo: { bytes: Uint8Array }, now = Date.now()) {
+	lastRecognized.set(userId, { photoHash: hash(photo), left: MAX_REGENERATIONS, until: now + REGENERATE_WITHIN_MS });
+	return MAX_REGENERATIONS;
+}
+
+/** Regenerations left after this one, or null if this photo may not be regenerated. */
+export function takeRegeneration(userId: string, photo: { bytes: Uint8Array }, now = Date.now()) {
+	const last = lastRecognized.get(userId);
+	if (!last || last.left < 1 || now > last.until || last.photoHash !== hash(photo)) return null;
+	return --last.left; // before the model call, so parallel requests can't exceed the limit
 }

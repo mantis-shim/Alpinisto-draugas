@@ -1,8 +1,10 @@
-// Self-check for photo upload checks and the WebP preview conversion (UC-3). Run: npm run check:photo
+// Self-check for photo uploads, the WebP preview and the model's input (UC-3). Run: npm run check:photo
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { crc32 } from 'node:zlib';
 import sharp from 'sharp';
 import { PHOTO_MAX_BYTES } from '#lib/domain.ts';
-import { PhotoError, photoToWebp, readPhoto } from '#lib/server/photo.ts';
+import { PhotoError, photoForModel, photoToWebp, readPhoto } from '#lib/server/photo.ts';
 
 const blank = (width: number, height: number) =>
 	sharp({ create: { width, height, channels: 3, background: '#2f5d50' } });
@@ -25,10 +27,49 @@ assert.equal(upright.exif, undefined, 'metadata stripped');
 // Small photos are not enlarged
 assert.equal((await sharp(await photoToWebp(await file(blank(300, 200).png()))).metadata()).width, 300);
 
-// Recognition gets JPG/PNG untouched (llama-server can't read WebP)
-const jpeg = await file(blank(50, 40).jpeg());
-assert.deepEqual(await readPhoto(jpeg), { bytes: new Uint8Array(await jpeg.arrayBuffer()), format: 'jpeg' });
-assert.equal((await readPhoto(await file(blank(50, 40).png()))).format, 'png');
+// The model gets every photo re-encoded: JPG stays JPG, PNG stays PNG, small, upright, no metadata
+const jpeg = await file(blank(2000, 1000).jpeg().withMetadata({ orientation: 6 }));
+const jpegPhoto = await readPhoto(jpeg);
+assert.deepEqual(jpegPhoto, { bytes: new Uint8Array(await jpeg.arrayBuffer()), format: 'jpeg' });
+const jpegForModel = await photoForModel(jpegPhoto);
+const jpegMeta = await sharp(jpegForModel.bytes).metadata();
+assert.deepEqual([jpegForModel.format, jpegMeta.format, jpegMeta.width, jpegMeta.height], ['jpeg', 'jpeg', 512, 1024]);
+assert.equal(jpegMeta.exif, undefined, 'no EXIF/GPS to the model device');
+const pngForModel = await photoForModel(await readPhoto(await file(blank(50, 40).png())));
+assert.equal(pngForModel.format, 'png');
+assert.equal((await sharp(pngForModel.bytes).metadata()).format, 'png');
+
+// A small PNG that declares a huge image never gets decoded
+const bomb = Buffer.from(await blank(1, 1).png().toBuffer());
+bomb.writeUInt32BE(10_000, 16); // IHDR width
+bomb.writeUInt32BE(10_000, 20); // IHDR height
+bomb.writeUInt32BE(crc32(bomb.subarray(12, 29)), 29);
+await assert.rejects(
+	photoForModel(await readPhoto(new File([bomb], 'bomb.png'))),
+	(e) => e instanceof PhotoError && /pixel limit/.test(String((e.cause as Error)?.message))
+);
+
+// A 2048x1536 HEIC filled with #2f5d50 (made with pillow-heif: sharp can't write HEIC)
+const heicFile = new File([await readFile(new URL('fixtures/blank.heic', import.meta.url))], 'IMG_0001.HEIC');
+const heic = await readPhoto(heicFile);
+assert.equal(heic.format, 'heic');
+const forModel = await photoForModel(heic);
+assert.equal(forModel.format, 'png');
+const heicMeta = await sharp(forModel.bytes).metadata();
+assert.deepEqual([heicMeta.format, heicMeta.width, heicMeta.height, heicMeta.channels], ['png', 1024, 768, 3], 'shrunk, no alpha');
+const means = (await sharp(forModel.bytes).stats()).channels.map((c) => Math.round(c.mean));
+means.forEach((mean, i) => assert.ok(Math.abs(mean - [0x2f, 0x5d, 0x50][i]) < 4, `colours kept: ${means}`));
+assert.equal((await sharp(await photoToWebp(heicFile)).metadata()).format, 'webp', 'HEIC preview');
+// Broken HEICs fail, and libheif's memory is freed each time (heic-decode leaked ~1 MB per MB uploaded).
+// libheif logs "Could not parse HEIF file".
+const brokenHeic = new Uint8Array(4 * 1024 * 1024);
+brokenHeic.set(heic.bytes.subarray(0, 32));
+const brokenUpload = () => photoForModel({ ...heic, bytes: brokenHeic });
+await assert.rejects(brokenUpload(), (e) => e instanceof PhotoError);
+const before = process.memoryUsage().rss;
+for (let i = 0; i < 30; i++) await brokenUpload().catch(() => {});
+const grownMb = (process.memoryUsage().rss - before) / 1024 / 1024;
+assert.ok(grownMb < 40, `memory grew ${grownMb.toFixed(0)} MB over 30 broken HEICs`);
 
 // Rejected uploads, each with its own message
 await rejects(null, /Pasirink/);
