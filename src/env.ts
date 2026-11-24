@@ -1,6 +1,7 @@
 // Environment variables (SvelteKit 3). Checked when the app starts; import them from '$app/env/private'.
 // Add new variables here and to .env.example (without values).
 import { defineEnvVars } from '@sveltejs/kit/env';
+import { MOCK_RESPONSES, isMockScenario, type MockScenario } from '#lib/server/recognition-mocks.ts';
 
 export const variables = defineEnvVars({
 	MONGODB_URI: {
@@ -18,5 +19,13 @@ export const variables = defineEnvVars({
 	LLAMA_API_KEY: {
 		description: "llama-server's --api-key. Required whenever llama-server is reachable over a network.",
 		schema: (value) => value || undefined
+	},
+	// UC-3 without the model device: every photo gets a canned reply (src/lib/server/recognition-mocks.ts)
+	RECOGNITION_MOCK: {
+		description: `Mock item recognition instead of llama-server: ${Object.keys(MOCK_RESPONSES).join(', ')}`,
+		schema: (value) => {
+			if (value && !isMockScenario(value)) throw new Error(`RECOGNITION_MOCK must be one of: ${Object.keys(MOCK_RESPONSES).join(', ')}`);
+			return (value || undefined) as MockScenario | undefined;
+		}
 	}
 });

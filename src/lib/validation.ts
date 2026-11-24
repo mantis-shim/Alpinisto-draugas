@@ -39,6 +39,9 @@ export const parseAttributes = (text: string) =>
 /** One attribute as text: "spalva: ruda", or just "neperšlampamas" for a tag. parseAttributes reads it back. */
 export const attributeText = ({ name, value }: { name: string; value: string }) => (value ? `${name}: ${value}` : name);
 
+/** An attribute name attributeText can write safely: a ":" in it would split it wrongly when read back. */
+export const attributeName = (name: string) => name.replaceAll(':', '').trim();
+
 export const itemFormValues = (item: Omit<InventoryItem, 'id'>): ItemFormValues => ({
 	name: item.name,
 	category: item.category,

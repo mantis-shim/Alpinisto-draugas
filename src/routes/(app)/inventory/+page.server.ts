@@ -2,11 +2,16 @@ import { fail } from '@sveltejs/kit';
 import { requireUser } from '#lib/server/auth.ts';
 import { createItem, deleteItem, hasItemNamed, listItems } from '#lib/server/inventory.ts';
 import { PhotoError, photoToWebp } from '#lib/server/photo.ts';
-import { MOCK_RECOGNITION, RecognitionError, recognizeItem } from '#lib/server/recognition.ts';
+import { mockModel } from '#lib/server/recognition-mocks.ts';
+import { RecognitionError, llamaModel, recognizeItem } from '#lib/server/recognition.ts';
 import { readItemForm } from '#lib/validation.ts';
-import { dev } from '$app/env';
-import { LLAMA_API_KEY, LLAMA_URL } from '$app/env/private';
+import { LLAMA_API_KEY, LLAMA_URL, RECOGNITION_MOCK } from '$app/env/private';
 import type { Actions, PageServerLoad } from './$types';
+
+// The one place that picks the recognition model
+const model = RECOGNITION_MOCK
+	? mockModel(RECOGNITION_MOCK)
+	: llamaModel({ url: LLAMA_URL, apiKey: LLAMA_API_KEY });
 
 export const load: PageServerLoad = async ({ locals }) => ({ items: await listItems(requireUser(locals).id) });
 
@@ -30,9 +35,7 @@ export const actions: Actions = {
 		requireUser(locals);
 		try {
 			const webp = await photoToWebp((await request.formData()).get('photo'));
-			// no LLAMA_URL in dev: a canned item, so the review below can be tried without the model device
-			const item =
-				dev && !LLAMA_URL ? MOCK_RECOGNITION : await recognizeItem(webp, { url: LLAMA_URL, apiKey: LLAMA_API_KEY });
+			const item = await recognizeItem(webp, model);
 			if (!item) return { notRecognized: true };
 			// The page reviews it (FR-21–23). Nothing is saved until the user confirms; ?/create saves it.
 			return { recognized: item };

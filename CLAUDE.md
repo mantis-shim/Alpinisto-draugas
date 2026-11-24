@@ -55,7 +55,7 @@ docker compose exec app npm run check:inventory   # self-check: inventory CRUD +
 npm ci                        # on the host too: the container's node_modules is a separate volume, so the editor needs its own copy for types
 npm run check:fitness         # self-check: questionnaire validation + fitness level formula (plain Node, no DB)
 docker compose exec app npm run check:photo         # self-check: photo upload rules + WebP conversion (no DB)
-docker compose exec app npm run check:recognition   # self-check: llama-server request, answer checks, error messages (fetch stubbed)
+docker compose exec app npm run check:recognition   # self-check: llama-server request (fetch stubbed), answer checks, retries, every mock scenario, attribute review
 ```
 
 - The app container runs `npm install` on every start, so deps stay in sync with `package.json`.
@@ -69,7 +69,9 @@ docker compose exec app npm run check:recognition   # self-check: llama-server r
   against `node build`.
 - Hot reload on Windows needs file polling (`USE_POLLING=true`, already wired in `vite.config.ts`).
 - The llama.cpp server runs on a separate device. Set `LLAMA_URL` to its address (`http://host.docker.internal:8080` only if it runs on this machine).
-  With `LLAMA_URL` empty, dev answers every photo with a canned item (`MOCK_RECOGNITION`), so the UC-3 review works without the model.
+  Without the model, set `RECOGNITION_MOCK=<scenario>` (`src/lib/server/recognition-mocks.ts`, one per branch of the
+  UC-3 flow; `check:recognition` tests the same ones).
+  The model sits behind `RecognitionModel` (`src/lib/server/recognition.ts`): `llamaModel` is the real one, `mockModel` the stand-in.
 - A variable added to `src/env.ts` is only read when the dev server starts: `docker compose restart app` after adding one.
 - Photo uploads (UC-3): `src/lib/server/photo.ts` checks type/size by content and converts JPG/PNG/HEIC to a ≤ 1024 px WebP in memory
   (sharp; HEIC via `heic-decode`, because sharp's prebuilt binaries can't read it). Production needs `BODY_SIZE_LIMIT=11M` (adapter-node default is 512K).
@@ -185,6 +187,8 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 - Send it to the local model, which returns name, category, attributes (e.g. colour, material, weight, or tags such as
   `neperšlampamas`, `sunkus`, `apsaugo_nuo_uodų`) and a confidence %. **Result within 10 s** (NŠ-1).
   **Decided (team, 2026-11-23): wait up to 30 s** (`RECOGNITION_TIMEOUT_MS` in `src/lib/server/recognition.ts`), because the local model is slower.
+  An unreachable or busy model device (network error, HTTP 5xx) is retried once automatically. A timeout or a broken answer
+  isn't (another 30 s, same answer): the user gets "Bandyti dar kartą".
 - Confidence < 70 %: tag the item "Patikrinkite".
 - Not recognised: tip "photograph in a bright place, one item per frame" and offer manual add (UC-2 form).
 - Show attributes next to the photo. Each attribute can be **confirmed / edited / rejected**, the name is editable, and there's a

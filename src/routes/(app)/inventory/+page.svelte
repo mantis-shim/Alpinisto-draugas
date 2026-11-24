@@ -4,11 +4,19 @@
 	import ItemFields from '#lib/components/ItemFields.svelte';
 	import { attributeText, itemFormValues } from '#lib/validation.ts';
 	import {
+		confirmAll,
+		confirmedAttributes,
+		finishEdit,
+		isUndecided,
+		needsCheck,
+		startReview,
+		type ReviewAttribute
+	} from '#lib/recognition-review.ts';
+	import {
 		CATEGORY_LABELS,
 		ITEM_CATEGORIES,
 		ITEM_LIMITS,
 		PHOTO_MAX_BYTES,
-		RECOGNITION_CHECK_BELOW,
 		TEMPERATURE_LABELS,
 		type InventoryItem
 	} from '#lib/domain.ts';
@@ -80,32 +88,17 @@
 		}
 	}
 
-	// UC-3 review (FR-21–23): each recognised attribute is confirmed, edited or rejected, and only confirmed ones are
-	// saved. ponytail: the review lives in the browser, so it needs JS (like the preview). Without JS the
-	// recognised item just pre-fills the normal form below.
-	type ReviewAttribute = {
-		name: string;
-		value: string;
-		status: 'pending' | 'confirmed' | 'rejected';
-		draft?: { name: string; value: string }; // being edited
-	};
+	// UC-3 review (FR-22–25, logic in recognition-review.ts): each recognised attribute is confirmed, edited or
+	// rejected, and only confirmed ones are saved. ponytail: the review lives in the browser, so it needs JS (like the
+	// preview). Without JS the recognised item just pre-fills the normal form below.
 	let review = $state<{ confidence: number; attributes: ReviewAttribute[] } | null>(null);
 	let reviewTried = $state(false); // "Išsaugoti" was pressed before every attribute was decided
-	const undecided = $derived(review?.attributes.filter((a) => a.draft || a.status === 'pending') ?? []);
+	const undecided = $derived(review?.attributes.filter(isUndecided) ?? []);
 	const addValues = $derived(
 		form?.values ?? (form?.recognized ? itemFormValues({ suitability: [], ...form.recognized }) : emptyValues)
 	);
 
-	function finishEdit(attribute: ReviewAttribute) {
-		const { draft } = attribute;
-		const name = draft?.name.replaceAll(':', '').trim(); // ":" separates name and value when saved
-		if (draft && name) {
-			attribute.name = name;
-			attribute.value = draft.value.trim();
-			attribute.status = 'confirmed'; // editing it is confirming it
-		}
-		attribute.draft = undefined;
-	}
+	// "Atmesti daiktą": nothing is saved (FR-25), the form starts over
 	async function discardReview() {
 		review = null;
 		reviewTried = false;
@@ -164,15 +157,15 @@
 				recognizing = false;
 				if (!form?.recognized) return;
 				const { confidence, attributes } = form.recognized;
-				review = { confidence, attributes: attributes.map((a): ReviewAttribute => ({ ...a, status: 'pending' })) };
+				review = { confidence, attributes: startReview(attributes) };
 				reviewTried = false;
 			};
 		}}
 	>
 		{#if form?.notRecognized}
 			<p class="notice notice-warning" role="status">
-				Daikto atpažinti nepavyko. Fotografuok šviesioje vietoje, po vieną daiktą kadre, arba pridėk daiktą
-				ranka žemiau.
+				Daikto atpažinti nepavyko. Fotografuok šviesioje vietoje, po vieną daiktą kadre, arba
+				<a href="#add-item">pridėk daiktą ranka</a>.
 			</p>
 		{/if}
 		<div class="field">
@@ -237,21 +230,14 @@
 		novalidate
 		use:enhance={({ formData, cancel }) => {
 			if (review) {
-				if (formData.has('confirmAll')) {
-					// everything not rejected; an open edit keeps what the user typed
-					for (const attribute of review.attributes) {
-						if (attribute.draft) finishEdit(attribute);
-						if (attribute.status === 'pending') attribute.status = 'confirmed';
-					}
-				}
-				if (undecided.length) {
+				if (formData.has('confirmAll')) confirmAll(review.attributes);
+				const attributes = confirmedAttributes(review.attributes);
+				if (attributes === null) {
 					reviewTried = true;
 					cancel();
 					return;
 				}
-				// only confirmed attributes enter the inventory (UC-3)
-				const confirmed = review.attributes.filter((a) => a.status === 'confirmed');
-				formData.set('attributes', confirmed.map(attributeText).join('\n'));
+				formData.set('attributes', attributes);
 			}
 			return async ({ result, update }) => {
 				await update();
@@ -269,7 +255,7 @@
 					<p class="notice" role="status">
 						Daiktą atpažino dirbtinis intelektas (tikrumas {review.confidence} %). Patikrink pavadinimą, kategoriją ir
 						požymius: į inventorių pateks tik tai, ką patvirtinsi.
-						{#if review.confidence < RECOGNITION_CHECK_BELOW}<span class="tag tag-warning">Patikrinkite</span>{/if}
+						{#if needsCheck(review.confidence)}<span class="tag tag-warning">Patikrinkite</span>{/if}
 					</p>
 					{@render itemForm()}
 				</div>

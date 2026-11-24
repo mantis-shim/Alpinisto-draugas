@@ -1,14 +1,27 @@
-// Self-check for item recognition (UC-3): request body, answer checks, error mapping. Run: npm run check:recognition
-// No network: fetch is replaced by a stub. Test against a real llama-server by hand.
+// Self-check for item recognition (UC-3): request body, answer checks, error mapping, retries, every mock scenario
+// and the attribute review. Run: npm run check:recognition
+// No network: the llama-server client gets a stubbed fetch, the rest uses the mocks the app plays (RECOGNITION_MOCK).
+// Test against a real llama-server by hand.
 import assert from 'node:assert/strict';
 import { ITEM_CATEGORIES } from '#lib/domain.ts';
 import {
+	confirmAll,
+	confirmedAttributes,
+	finishEdit,
+	needsCheck,
+	startReview
+} from '#lib/recognition-review.ts';
+import { MOCK_RESPONSES, isMockScenario, mockModel, type MockScenario } from '#lib/server/recognition-mocks.ts';
+import {
+	MAX_ATTEMPTS,
 	RECOGNITION_TIMEOUT_MS,
 	RecognitionError,
+	llamaModel,
 	parseRecognition,
 	recognitionRequest,
 	recognizeItem
 } from '#lib/server/recognition.ts';
+import { readItemForm } from '#lib/validation.ts';
 
 assert.equal(RECOGNITION_TIMEOUT_MS, 30_000);
 
@@ -36,6 +49,8 @@ assert.deepEqual(
 	}
 );
 assert.equal(parseRecognition(answer({ recognized: false })), null, 'model says it cannot tell');
+assert.throws(() => parseRecognition(answer({ recognized: 'taip' })), RecognitionError, 'no verdict = broken answer');
+assert.throws(() => parseRecognition('null'), RecognitionError);
 assert.equal(parseRecognition(answer({ name: '   ' })), null, 'no name = not recognised');
 assert.equal(parseRecognition(answer({ category: 'SHOES' }))?.category, 'OTHER', 'unknown category');
 assert.equal(parseRecognition(answer({ confidence: 140 }))?.confidence, 100);
@@ -53,9 +68,10 @@ assert.equal(
 );
 assert.throws(() => parseRecognition('not json'), RecognitionError);
 
-// Calling llama-server (stubbed fetch)
-const calls: { url: string; init: RequestInit }[] = [];
+// The real client: llama-server (stubbed fetch)
+let calls: { url: string; init: RequestInit }[] = [];
 const stub = (respond: () => Response | Promise<Response>) => {
+	calls = [];
 	globalThis.fetch = async (url, init) => {
 		calls.push({ url: String(url), init: init! });
 		return respond();
@@ -63,7 +79,7 @@ const stub = (respond: () => Response | Promise<Response>) => {
 };
 const reply = (content: string, finish_reason = 'stop') =>
 	Response.json({ choices: [{ finish_reason, message: { role: 'assistant', content } }] });
-const llama = { url: 'http://model-box:8080/', apiKey: 'secret' };
+const llama = llamaModel({ url: 'http://model-box:8080/', apiKey: 'secret' });
 const failsWith = (message: RegExp) => (e: unknown) => e instanceof RecognitionError && message.test(e.message);
 
 stub(() => reply(answer({})));
@@ -74,14 +90,117 @@ assert.ok(calls[0].init.signal instanceof AbortSignal, 'request has a timeout');
 
 stub(() => reply(answer({}), 'length'));
 await assert.rejects(recognizeItem(webp, llama), failsWith(/Nepavyko/), 'cut-off answer');
+assert.equal(calls.length, 1, 'a broken answer is not retried');
 stub(() => new Response('Unauthorized', { status: 401 }));
 await assert.rejects(recognizeItem(webp, llama), failsWith(/Nepavyko/), 'wrong API key');
+assert.equal(calls.length, 1, 'a config error is not retried');
 stub(() => new Response('Loading model', { status: 503 }));
 await assert.rejects(recognizeItem(webp, llama), failsWith(/Nepavyko/), 'model still loading');
+assert.equal(calls.length, MAX_ATTEMPTS, 'busy model is retried');
 stub(() => Promise.reject(new TypeError('fetch failed')));
 await assert.rejects(recognizeItem(webp, llama), failsWith(/Nepavyko/), 'device unreachable');
+assert.equal(calls.length, MAX_ATTEMPTS, 'unreachable device is retried');
+stub(() => (calls.length === 1 ? Promise.reject(new TypeError('fetch failed')) : reply(answer({}))));
+assert.equal((await recognizeItem(webp, llama))?.name, 'Žygio batai', 'dropped connection, the retry works');
 stub(() => Promise.reject(new DOMException('timed out', 'TimeoutError')));
 await assert.rejects(recognizeItem(webp, llama), failsWith(/per ilgai/), 'timeout has its own message');
-await assert.rejects(recognizeItem(webp, {}), failsWith(/Nepavyko/), 'LLAMA_URL not set');
+assert.equal(calls.length, 1, 'a timeout is not retried (another 30 s)');
+await assert.rejects(recognizeItem(webp, llamaModel({})), failsWith(/Nepavyko/), 'LLAMA_URL not set');
+
+// Mock scenarios: the same objects the app plays with RECOGNITION_MOCK
+const schema = recognitionRequest(webp).response_format.json_schema.schema;
+for (const response of Object.values(MOCK_RESPONSES).flat()) {
+	if (typeof response !== 'object' || response instanceof Error) continue;
+	assert.deepEqual(Object.keys(response).sort(), [...schema.required].sort(), 'mock answers follow the contract');
+}
+assert.ok(isMockScenario('flaky') && !isMockScenario('toString'), 'RECOGNITION_MOCK check');
+
+/** Recognises a photo with the scenario; counts the calls to the model. */
+const recognize = async (scenario: MockScenario) => {
+	const model = mockModel(scenario);
+	let count = 0;
+	const result = await recognizeItem(webp, (photo) => (count++, model(photo))).catch((error: unknown) => error);
+	return { result, calls: count };
+};
+const item = (result: unknown) => {
+	assert.ok(result && typeof result === 'object' && 'confidence' in result, `expected an item, got ${result}`);
+	return result as NonNullable<Awaited<ReturnType<typeof recognizeItem>>>;
+};
+
+// FR-19/FR-20: the item with its confidence; the 70 % threshold
+const confident = await recognize('confident');
+assert.deepEqual(item(confident.result), {
+	name: 'Žygio batai',
+	category: 'FOOTWEAR',
+	attributes: MOCK_RESPONSES.confident.attributes,
+	confidence: 92
+});
+assert.equal(needsCheck(item(confident.result).confidence), false, '92 %: no "Patikrinkite"');
+assert.equal(needsCheck(item((await recognize('threshold')).result).confidence), false, 'exactly 70 %: no tag');
+assert.equal(needsCheck(item((await recognize('lowConfidence')).result).confidence), true, '69 %: "Patikrinkite"');
+
+// Some attributes missing: only what the model saw is reviewed, nothing is made up
+const missing = item((await recognize('missingAttributes')).result);
+assert.deepEqual(missing.attributes, [{ name: 'spalva', value: 'ruda' }]);
+
+// FR-21: not recognised -> null (the page shows the photo tip and the manual form)
+assert.deepEqual(await recognize('notRecognized'), { result: null, calls: 1 });
+
+// Broken answer: fails at once
+const invalid = await recognize('invalid');
+assert.ok(failsWith(/Nepavyko/)(invalid.result), 'invalid answer -> error for the user');
+assert.equal(invalid.calls, 1, 'invalid answer is not retried');
+
+// Errors and retries
+const timeout = await recognize('timeout');
+assert.ok(failsWith(/per ilgai/)(timeout.result), 'timeout -> "užtruko per ilgai", the page offers "Bandyti dar kartą"');
+assert.equal(timeout.calls, 1, 'timeout is not retried automatically');
+const unreachable = await recognize('unreachable');
+assert.ok(failsWith(/Nepavyko/)(unreachable.result), 'retry, then give up');
+assert.equal(unreachable.calls, MAX_ATTEMPTS);
+const flaky = await recognize('flaky');
+assert.equal(item(flaky.result).name, 'Žygio batai', 'retry, then success');
+assert.equal(flaky.calls, 2);
+
+// Attribute review (FR-23–25): what "Išsaugoti" / "Patvirtinti visus" send to ?/create
+const saved = (text: string) => {
+	const data = new FormData();
+	data.set('name', 'Žygio batai');
+	data.set('category', 'FOOTWEAR');
+	data.set('attributes', text);
+	return readItemForm(data).input.attributes;
+};
+const review = startReview(MOCK_RESPONSES.confident.attributes); // spalva, medžiaga, svoris, neperšlampamas
+assert.ok(review.every((a) => a.status === 'pending'));
+assert.equal(confirmedAttributes(review), null, 'nothing is saved while an attribute is undecided');
+
+review[0].status = 'confirmed';
+review[1].status = 'rejected';
+review[2].draft = { name: 'svoris:', value: ' 1,3 kg ' }; // edit still open
+review[3].draft = { name: ' ', value: '' }; // edit without a name
+assert.equal(confirmedAttributes(review), null, 'an open edit blocks saving too');
+confirmAll(review);
+assert.deepEqual(
+	review.map((a) => a.status),
+	['confirmed', 'rejected', 'confirmed', 'confirmed'],
+	'"Patvirtinti visus" keeps rejected ones rejected'
+);
+assert.deepEqual(saved(confirmedAttributes(review)!), [
+	{ name: 'spalva', value: 'ruda' },
+	{ name: 'svoris', value: '1,3 kg' }, // the open edit was kept, ":" removed
+	{ name: 'neperšlampamas', value: '' } // the edit without a name was dropped
+]);
+assert.equal(MOCK_RESPONSES.confident.attributes[2].value, '1,2 kg', 'reviewing never changes the recognised item');
+
+const edited = startReview([{ name: 'spalva', value: 'ruda' }]);
+edited[0].draft = { name: 'spalva', value: 'juoda' };
+finishEdit(edited[0]);
+assert.deepEqual(edited[0], { name: 'spalva', value: 'juoda', status: 'confirmed', draft: undefined }, 'edit confirms');
+
+// Rejecting: rejected attributes are not saved. Rejecting the whole item ("Atmesti daiktą") never submits ?/create,
+// and recognising writes nothing (no DB in this script), so nothing reaches the inventory.
+const rejected = startReview(MOCK_RESPONSES.confident.attributes);
+for (const attribute of rejected) attribute.status = 'rejected';
+assert.equal(confirmedAttributes(rejected), '');
 
 console.log('recognition checks passed');
