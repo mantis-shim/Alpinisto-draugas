@@ -55,7 +55,7 @@ docker compose exec app npm run check:inventory   # self-check: inventory CRUD +
 npm ci                        # on the host too: the container's node_modules is a separate volume, so the editor needs its own copy for types
 npm run check:fitness         # self-check: questionnaire validation + fitness level formula (plain Node, no DB)
 docker compose exec app npm run check:photo         # self-check: photo upload rules + WebP conversion (no DB)
-docker compose exec app npm run check:recognition   # self-check: llama-server request (fetch stubbed), answer checks, retries, every mock scenario, attribute review
+docker compose exec app npm run check:recognition   # self-check: llama-server request (fetch stubbed), answer checks, retries, every mock scenario, form pre-fill
 ```
 
 - The app container runs `npm install` on every start, so deps stay in sync with `package.json`.
@@ -154,7 +154,7 @@ FitnessLevel  = LOW | MEDIUM | HIGH   (UI: žemas / vidutinis / aukštas)
 | `/` | visitors | landing page; logged-in users are redirected to `/plan`; `/?deleted` shows "account deleted" |
 | `(auth)/login`, `(auth)/register` | visitors | UC-1 + UC-12 consent; logged-in users are redirected to `/plan` |
 | `(app)/plan` | logged in | trip planning (placeholder until UC-6) |
-| `(app)/inventory` | logged in | UC-2 add form (`?/create`, duplicate warning) + UC-3 photo (`?/recognize`, then a review of each attribute in the browser that saves through `?/create`) + UC-4 list with search/filter/sort in the browser, delete with a `<dialog>` (`?/delete`) |
+| `(app)/inventory` | logged in | bright "Pridėti daiktą" button opens a `<dialog>`: UC-2 text form (`?/create`, duplicate warning) with "Pridėti iš nuotraukos" beside it (UC-3 `?/recognize` → "Generuoti" pre-fills the same text form) + UC-4 list with search/filter/sort in the browser, delete with a `<dialog>` (`?/delete`) |
 | `(app)/inventory/preview` | logged in | `POST` a photo, get the WebP back: preview for photos the browser can't show (HEIC outside Safari) |
 | `(app)/inventory/[id]` | logged in | UC-4 edit one item; someone else's id gets the same 404 as a missing one |
 | `(app)/questionnaire` | logged in | fitness questionnaire: answers + assigned level, editable (UC-5). **Not in the header nav**: reached from `/account` ("Užpildyti klausimyną" / "Keisti atsakymus"), and the "Paskyra" nav link stays highlighted on it (team decision 2026-11-23, keeps the nav short). Link to it wherever UC-5 is offered (UC-7 2b). |
@@ -177,8 +177,13 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 - Store only a password hash.
 
 ### UC-2 Add item manually (US-5, Vincentas, S1) FR-11–14
-- Fields: name (required), category (from the list), other attributes.
-- While typing the name, suggest common hiking items.
+- Fields: name (required), category (from the list), other attributes ("Kiti požymiai") as tags, typed as "Požymis" +
+  optional "Reikšmė" (`typedAttribute()`), one colour per attribute name with the same name grouped (`groupAttributes()` in
+  `src/lib/validation.ts`, `.tag-hue`). Each tag is its own `attributes` form field, plus the `attributeName`/`attributeValue`
+  pair still being typed; `readItemForm` joins them.
+- While typing the name, suggest common hiking items. Name and "Požymis" use `src/lib/components/Combobox.svelte`
+  (our own styled list under the field, not `<datalist>`, whose popup can't be styled and lands beside a modal `<dialog>`).
+  "Požymis" suggests common names plus the ones already in the user's inventory.
 - Empty name: highlight the field and don't save. Same name already in the inventory: warn about the duplicate and let the user save anyway or cancel.
 
 ### UC-3 Recognise item from photo (US-2, US-4, Vincentas, S1) FR-15–25
@@ -193,11 +198,15 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 - Not recognised: tip "photograph in a bright place, one item per frame" and offer manual add (UC-2 form).
 - Show attributes next to the photo. Each attribute can be **confirmed / edited / rejected**, the name is editable, and there's a
   "Patvirtinti visus" button. Rejecting the whole item saves nothing. **Only confirmed items enter the inventory.**
+  **Changed (Vincentas, 2026-11-24):** no per-attribute review. A recognised item pre-fills the normal add form (attributes one
+  per tag, removable, new ones via "Pridėti požymį") next to the photo, with the confidence and "Patikrinkite". "Išsaugoti" confirms it,
+  "Atšaukti" (closing the popup) rejects it and saves nothing.
 - Photos are processed and discarded, **never stored**.
 - HEIC: most browsers can't render it in `<img>`, so convert it before preview or model input.
 
 ### UC-4 View & manage inventory (US-10 Mantas, US-14 Naglis, S1) FR-26–30
 - List all items with name, category and suitability tags. Sort by name, filter by category, search by name.
+  Also filter by attribute ("Filtruoti pagal požymį"): only tags that exist in the inventory, grouped by name.
 - Empty inventory: show a message with a "Pridėti daiktą" link.
 - Edit name, category and attributes. "Išsaugoti" saves, "Atšaukti" leaves the item unchanged.
 - Delete only after a confirmation dialog. Deleted items aren't used in **new** recommendations (history stays as it was).
@@ -293,7 +302,8 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
   `--text-*`, `--radius-*`) and classes. Don't hard-code colours or invent per-page buttons.
 - Base elements are already styled: headings, text, lists, tables, forms, `<dialog>`, `<details>`.
 - Shared classes:
-  - `.button` with `-secondary`, `-ghost`, `-danger`, `-large`. A plain `<button>` is primary by default.
+  - `.button` with `-secondary`, `-ghost`, `-danger`, `-large`, `-cta`. A plain `<button>` is primary by default.
+    `-cta` is the bright green "add" action (`--c-cta`): the page's one main call to action and the submit buttons of its popup.
   - `.field`, `.field-hint`, `.field-error` for form fields.
   - `.tag` with `-primary`, `-warning`, `-danger`, `-success` (Būtinas, Rekomenduojamas, Patikrinkite).
   - `.notice` with `-warning`, `-danger`, `-success` (disclaimers, errors).

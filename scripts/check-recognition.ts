@@ -1,16 +1,9 @@
 // Self-check for item recognition (UC-3): request body, answer checks, error mapping, retries, every mock scenario
-// and the attribute review. Run: npm run check:recognition
+// and the form pre-fill. Run: npm run check:recognition
 // No network: the llama-server client gets a stubbed fetch, the rest uses the mocks the app plays (RECOGNITION_MOCK).
 // Test against a real llama-server by hand.
 import assert from 'node:assert/strict';
-import { ITEM_CATEGORIES } from '#lib/domain.ts';
-import {
-	confirmAll,
-	confirmedAttributes,
-	finishEdit,
-	needsCheck,
-	startReview
-} from '#lib/recognition-review.ts';
+import { ITEM_CATEGORIES, RECOGNITION_CHECK_BELOW } from '#lib/domain.ts';
 import { MOCK_RESPONSES, isMockScenario, mockModel, type MockScenario } from '#lib/server/recognition-mocks.ts';
 import {
 	MAX_ATTEMPTS,
@@ -21,7 +14,7 @@ import {
 	recognitionRequest,
 	recognizeItem
 } from '#lib/server/recognition.ts';
-import { readItemForm } from '#lib/validation.ts';
+import { itemFormValues, readItemForm } from '#lib/validation.ts';
 
 assert.equal(RECOGNITION_TIMEOUT_MS, 30_000);
 
@@ -135,11 +128,12 @@ assert.deepEqual(item(confident.result), {
 	attributes: MOCK_RESPONSES.confident.attributes,
 	confidence: 92
 });
-assert.equal(needsCheck(item(confident.result).confidence), false, '92 %: no "Patikrinkite"');
-assert.equal(needsCheck(item((await recognize('threshold')).result).confidence), false, 'exactly 70 %: no tag');
-assert.equal(needsCheck(item((await recognize('lowConfidence')).result).confidence), true, '69 %: "Patikrinkite"');
+const needsCheck = (result: unknown) => item(result).confidence < RECOGNITION_CHECK_BELOW; // the page's test
+assert.equal(needsCheck(confident.result), false, '92 %: no "Patikrinkite"');
+assert.equal(needsCheck((await recognize('threshold')).result), false, 'exactly 70 %: no tag');
+assert.equal(needsCheck((await recognize('lowConfidence')).result), true, '69 %: "Patikrinkite"');
 
-// Some attributes missing: only what the model saw is reviewed, nothing is made up
+// Some attributes missing: only what the model saw is filled in, nothing is made up
 const missing = item((await recognize('missingAttributes')).result);
 assert.deepEqual(missing.attributes, [{ name: 'spalva', value: 'ruda' }]);
 
@@ -162,45 +156,14 @@ const flaky = await recognize('flaky');
 assert.equal(item(flaky.result).name, 'Žygio batai', 'retry, then success');
 assert.equal(flaky.calls, 2);
 
-// Attribute review (FR-23–25): what "Išsaugoti" / "Patvirtinti visus" send to ?/create
-const saved = (text: string) => {
-	const data = new FormData();
-	data.set('name', 'Žygio batai');
-	data.set('category', 'FOOTWEAR');
-	data.set('attributes', text);
-	return readItemForm(data).input.attributes;
-};
-const review = startReview(MOCK_RESPONSES.confident.attributes); // spalva, medžiaga, svoris, neperšlampamas
-assert.ok(review.every((a) => a.status === 'pending'));
-assert.equal(confirmedAttributes(review), null, 'nothing is saved while an attribute is undecided');
-
-review[0].status = 'confirmed';
-review[1].status = 'rejected';
-review[2].draft = { name: 'svoris:', value: ' 1,3 kg ' }; // edit still open
-review[3].draft = { name: ' ', value: '' }; // edit without a name
-assert.equal(confirmedAttributes(review), null, 'an open edit blocks saving too');
-confirmAll(review);
-assert.deepEqual(
-	review.map((a) => a.status),
-	['confirmed', 'rejected', 'confirmed', 'confirmed'],
-	'"Patvirtinti visus" keeps rejected ones rejected'
-);
-assert.deepEqual(saved(confirmedAttributes(review)!), [
-	{ name: 'spalva', value: 'ruda' },
-	{ name: 'svoris', value: '1,3 kg' }, // the open edit was kept, ":" removed
-	{ name: 'neperšlampamas', value: '' } // the edit without a name was dropped
-]);
-assert.equal(MOCK_RESPONSES.confident.attributes[2].value, '1,2 kg', 'reviewing never changes the recognised item');
-
-const edited = startReview([{ name: 'spalva', value: 'ruda' }]);
-edited[0].draft = { name: 'spalva', value: 'juoda' };
-finishEdit(edited[0]);
-assert.deepEqual(edited[0], { name: 'spalva', value: 'juoda', status: 'confirmed', draft: undefined }, 'edit confirms');
-
-// Rejecting: rejected attributes are not saved. Rejecting the whole item ("Atmesti daiktą") never submits ?/create,
-// and recognising writes nothing (no DB in this script), so nothing reaches the inventory.
-const rejected = startReview(MOCK_RESPONSES.confident.attributes);
-for (const attribute of rejected) attribute.status = 'rejected';
-assert.equal(confirmedAttributes(rejected), '');
+// The recognised item pre-fills the add form (UC-3): saved untouched, ?/create gets exactly what the model said
+const { name, category, attributes: recognized } = item(confident.result);
+const filled = itemFormValues({ name, category, suitability: [], attributes: recognized });
+const data = new FormData();
+data.set('name', filled.name);
+data.set('category', filled.category);
+data.set('attributes', filled.attributes);
+assert.deepEqual(readItemForm(data).input, { name, category, suitability: [], attributes: recognized });
+// Recognising writes nothing (no DB in this script): only "Išsaugoti" on the form reaches the inventory.
 
 console.log('recognition checks passed');

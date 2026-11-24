@@ -37,7 +37,7 @@ export const actions: Actions = {
 			const webp = await photoToWebp((await request.formData()).get('photo'));
 			const item = await recognizeItem(webp, model);
 			if (!item) return { notRecognized: true };
-			// The page reviews it (FR-21–23). Nothing is saved until the user confirms; ?/create saves it.
+			// It pre-fills the add form for the user to check. Nothing is saved until they press "Išsaugoti" (?/create).
 			return { recognized: item };
 		} catch (error) {
 			if (error instanceof PhotoError) return fail(400, { photoError: error.message, retry: false }); // pick another

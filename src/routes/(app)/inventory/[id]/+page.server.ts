@@ -1,7 +1,7 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import { resolve } from '$app/paths';
 import { requireUser } from '#lib/server/auth.ts';
-import { getItem, updateItem } from '#lib/server/inventory.ts';
+import { getItem, listAttributeNames, updateItem } from '#lib/server/inventory.ts';
 import { readItemForm } from '#lib/validation.ts';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -9,9 +9,10 @@ import type { Actions, PageServerLoad } from './$types';
 const NOT_FOUND = 'Tokio daikto tavo inventoriuje nėra.';
 
 export const load: PageServerLoad = async ({ locals, params }) => {
-	const item = await getItem(requireUser(locals).id, params.id);
+	const userId = requireUser(locals).id;
+	const [item, attributeNames] = await Promise.all([getItem(userId, params.id), listAttributeNames(userId)]);
 	if (!item) error(404, NOT_FOUND);
-	return { item };
+	return { item, attributeNames };
 };
 
 export const actions: Actions = {

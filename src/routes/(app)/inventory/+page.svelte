@@ -2,21 +2,12 @@
 	import { applyAction, enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import ItemFields from '#lib/components/ItemFields.svelte';
-	import { attributeText, itemFormValues } from '#lib/validation.ts';
-	import {
-		confirmAll,
-		confirmedAttributes,
-		finishEdit,
-		isUndecided,
-		needsCheck,
-		startReview,
-		type ReviewAttribute
-	} from '#lib/recognition-review.ts';
+	import { attributeText, fold, groupAttributes, itemFormValues } from '#lib/validation.ts';
 	import {
 		CATEGORY_LABELS,
 		ITEM_CATEGORIES,
-		ITEM_LIMITS,
 		PHOTO_MAX_BYTES,
+		RECOGNITION_CHECK_BELOW,
 		TEMPERATURE_LABELS,
 		type InventoryItem
 	} from '#lib/domain.ts';
@@ -26,10 +17,15 @@
 	let deleteDialog: HTMLDialogElement;
 	let toDelete: InventoryItem | undefined = $state();
 
+	// UC-2 + UC-3 in one popup: the text form by default, "Pridėti iš nuotraukos" beside it. A recognised item
+	// pre-fills the same text form (team decision 2026-11-24, replaces the per-attribute review).
+	let addDialog: HTMLDialogElement;
+	let addForm: HTMLFormElement;
+	let mode: 'text' | 'photo' = $state('text');
+	let ai: { confidence: number } | null = $state(null); // set while the text form holds what the model recognised
 	const emptyValues = { name: '', category: '', suitability: [], attributes: '' };
-	// open while the inventory is empty or the last submit needs fixing; bound, so a re-render never shuts it on the user
-	let addOpen = $derived(
-		data.items.length === 0 || !!(form?.values || form?.photoError || form?.notRecognized || form?.recognized)
+	const addValues = $derived(
+		form?.values ?? (form?.recognized ? itemFormValues({ suitability: [], ...form.recognized }) : emptyValues)
 	);
 	let recognizing = $state(false); // the model can take up to 30 s
 
@@ -56,10 +52,6 @@
 			photoNote = 'Nuotrauka per didelė. Įkelk nuotrauką iki 10 MB.';
 			photoInput.value = '';
 		} else preview = URL.createObjectURL(file);
-	}
-	function clearPhoto() {
-		photoInput.value = '';
-		showPhoto(undefined);
 	}
 	// The browser can't show this photo (HEIC outside Safari), so the server converts it, as it will for the model.
 	// ponytail: such a photo is uploaded twice (preview + recognition). Send the WebP for recognition if that hurts.
@@ -88,44 +80,63 @@
 		}
 	}
 
-	// UC-3 review (FR-22–25, logic in recognition-review.ts): each recognised attribute is confirmed, edited or
-	// rejected, and only confirmed ones are saved. ponytail: the review lives in the browser, so it needs JS (like the
-	// preview). Without JS the recognised item just pre-fills the normal form below.
-	let review = $state<{ confidence: number; attributes: ReviewAttribute[] } | null>(null);
-	let reviewTried = $state(false); // "Išsaugoti" was pressed before every attribute was decided
-	const undecided = $derived(review?.attributes.filter(isUndecided) ?? []);
-	const addValues = $derived(
-		form?.values ?? (form?.recognized ? itemFormValues({ suitability: [], ...form.recognized }) : emptyValues)
-	);
-
-	// "Atmesti daiktą": nothing is saved (FR-25), the form starts over
-	async function discardReview() {
-		review = null;
-		reviewTried = false;
-		clearPhoto();
-		// forget the recognised item and any warning about it (`location` only matters for redirects)
-		await applyAction({ type: 'success', status: 200, location: location.href });
-		addOpen = true; // stay here: try another photo or add the item by hand
-		setTimeout(() => photoInput.focus()); // after SvelteKit's own focus reset, which also ends in a timeout
+	// Closing the popup (Atšaukti, ✕, Esc, or after saving) drops the draft: a recognised item that wasn't saved is
+	// gone (FR-25), and the next item starts from the text form.
+	// ponytail: mode switching needs JS. Without it the popup still opens (command attributes) with the text form only.
+	async function resetAdd() {
+		mode = 'text';
+		ai = null;
+		galleryHelp = false;
+		photoInput.value = '';
+		showPhoto(undefined);
+		addForm.reset();
+		// forget errors and the recognised item, but keep "pridėtas" after a save (`location` only matters for redirects)
+		if (form?.values || form?.recognized || form?.photoError || form?.notRecognized) {
+			await applyAction({ type: 'success', status: 200, location: location.href });
+		}
 	}
 
 	// FR-27: search, filter and sort in the browser, so a slow connection costs no extra requests
 	let query = $state('');
 	let category = $state('');
+	let tag = $state(''); // a tag from the inventory, by tagKey()
 	let sort = $state('asc');
-	// "zygio" finds "Žygio batai": phone keyboards often skip the Lithuanian letters
-	const fold = (text: string) => text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+	const tagKey = (a: { name: string; value: string }) => fold(attributeText(a)); // "Spalva: Ruda" = "spalva: ruda"
+	// Every tag in the inventory once. For the filter: grouped by name (<optgroup>), A–Ž, tags without a value last.
+	const inventoryTags = $derived(new Map(data.items.flatMap((i) => i.attributes).map((a) => [tagKey(a), a])));
+	const tagGroups = $derived(
+		Map.groupBy(
+			[...inventoryTags.values()].toSorted(
+				(a, b) => Number(!a.value) - Number(!b.value) || attributeText(a).localeCompare(attributeText(b), 'lt')
+			),
+			(a) => (a.value ? fold(a.name) : '')
+		)
+	);
+	const tagFilter = $derived(inventoryTags.has(tag) ? tag : ''); // a tag whose last item was deleted stops filtering
 	const shown = $derived.by(() => {
 		const q = fold(query.trim());
-		const items = data.items.filter((i) => (!category || i.category === category) && fold(i.name).includes(q));
+		const items = data.items.filter(
+			(i) =>
+				(!category || i.category === category) &&
+				(!tagFilter || i.attributes.some((a) => tagKey(a) === tagFilter)) &&
+				fold(i.name).includes(q)
+		);
 		return sort === 'desc' ? items.reverse() : items; // the server sorts A–Ž; filter() already made a copy
 	});
 </script>
 
 <svelte:head><title>Inventorius – Alpinisto draugas</title></svelte:head>
 
-<h1>Inventorius</h1>
-<p>Surašyk turimą ekipuotę. Rekomendacijose pasakysime, ką pasiimti iš inventoriaus ir ko trūksta.</p>
+<div class="page-head">
+	<div>
+		<h1>Inventorius</h1>
+		<p>Surašyk turimą ekipuotę. Rekomendacijose pasakysime, ką pasiimti iš inventoriaus ir ko trūksta.</p>
+	</div>
+	<button class="button-cta button-large" command="show-modal" commandfor="add-dialog">
+		<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+		Pridėti daiktą
+	</button>
+</div>
 
 {#if form?.created}
 	<p class="notice notice-success" role="status">Daiktas „{form.created}“ pridėtas į inventorių.</p>
@@ -137,248 +148,164 @@
 	<p class="notice notice-danger" role="alert">Šio daikto inventoriuje nebėra.</p>
 {/if}
 {#if data.items.length === 0}
-	<p class="notice" role="status">Inventoriuje dar nėra daiktų. <a href="#add-item">Pridėti daiktą</a></p>
+	<div class="notice empty" role="status">
+		<p>Inventoriuje dar nėra daiktų.</p>
+		<button class="button-secondary" command="show-modal" commandfor="add-dialog">Pridėti daiktą</button>
+	</div>
 {/if}
 
-<details bind:open={addOpen}>
-	<summary>Pridėti daiktą</summary>
-	<!-- UC-3: one photo; the server checks type and size and converts it. Hidden while its result is reviewed. -->
-	<form
-		method="POST"
-		action="?/recognize"
-		enctype="multipart/form-data"
-		novalidate
-		hidden={!!review}
-		use:enhance={() => {
-			recognizing = true;
-			photoNote = undefined; // show what the server says about this attempt
-			return async ({ update }) => {
-				await update({ reset: false }); // keep the photo for a retry or another look
-				recognizing = false;
-				if (!form?.recognized) return;
-				const { confidence, attributes } = form.recognized;
-				review = { confidence, attributes: startReview(attributes) };
-				reviewTried = false;
-			};
-		}}
-	>
-		{#if form?.notRecognized}
-			<p class="notice notice-warning" role="status">
-				Daikto atpažinti nepavyko. Fotografuok šviesioje vietoje, po vieną daiktą kadre, arba
-				<a href="#add-item">pridėk daiktą ranka</a>.
-			</p>
-		{/if}
-		<div class="field">
-			<label for="item-photo">Įkelti iš galerijos</label>
-			<input
-				bind:this={photoInput}
-				id="item-photo"
-				name="photo"
-				type="file"
-				accept="image/jpeg,image/png,image/heic,image/heif,.heic,.heif"
-				aria-invalid={photoError ? 'true' : undefined}
-				aria-describedby={photoError ? 'item-photo-hint item-photo-error' : 'item-photo-hint'}
-				onchange={(e) => showPhoto(e.currentTarget.files?.[0])}
-				oncancel={() => (galleryHelp = true)}
-			/>
-			<p class="field-hint" id="item-photo-hint">JPG, PNG arba HEIC iki 10 MB. Vienoje nuotraukoje – vienas daiktas.</p>
-			{#if photoError}<p class="field-error" id="item-photo-error">{photoError}</p>{/if}
-		</div>
-		{#if preview}
-			<figure class="preview">
-				{#if converting}
-					<p class="field-hint"><span class="spinner" aria-hidden="true"></span> Ruošiama peržiūra…</p>
-				{:else}
-					<img src={preview} alt="Pasirinkta nuotrauka" onerror={convertPreview} />
-				{/if}
-				<figcaption class="field-hint">Ne ta nuotrauka? Pasirink kitą – ji pakeis šią.</figcaption>
-			</figure>
-		{/if}
-		<!-- FR-18 -->
-		<!-- ponytail: a page can't ask whether gallery access was denied. A closed picker ("cancel") is the closest
-		     signal, so it opens this help; the help is always one tap away for pickers that never open at all. -->
-		<details class="gallery-help" bind:open={galleryHelp}>
-			<summary>Neatsidaro galerija?</summary>
-			<p>
-				Gali būti, kad naršyklė neturi leidimo naudotis nuotraukomis. Suteik jį telefono nustatymuose ir pasirink
-				nuotrauką dar kartą:
-			</p>
-			<ul>
-				<li>
-					<strong>Android:</strong> „Nustatymai“ → „Programos“ → tavo naršyklė (pvz., Chrome) → „Leidimai“ →
-					„Nuotraukos ir vaizdo įrašai“ (senesniuose telefonuose – „Saugykla“) → „Leisti“.
-				</li>
-				<li>
-					<strong>iPhone:</strong> „Nustatymai“ → „Programos“ → tavo naršyklė (pvz., Safari ar Chrome) →
-					„Nuotraukos“ arba „Kamera“ → „Leisti“.
-				</li>
-			</ul>
-			<p>Jei vis tiek nepavyksta, pridėk daiktą ranka žemiau.</p>
-		</details>
-		<button class="button-secondary" disabled={recognizing || converting}>
-			{#if recognizing}<span class="spinner" aria-hidden="true"></span> Atpažįstama…
-			{:else if retry}Bandyti dar kartą{:else}Atpažinti{/if}
+<dialog id="add-dialog" class="add-dialog" bind:this={addDialog} aria-labelledby="add-title" onclose={resetAdd}>
+	<div class="add-head">
+		<h2 id="add-title">{mode === 'photo' ? 'Pridėti iš nuotraukos' : 'Pridėti daiktą'}</h2>
+		<button type="button" class="button-ghost close" command="close" commandfor="add-dialog" aria-label="Uždaryti">
+			<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
 		</button>
-	</form>
-
-	<!-- novalidate: the server checks everything and answers in Lithuanian -->
-	<form
-		id="add-item"
-		class:wide={review}
-		method="POST"
-		action="?/create"
-		novalidate
-		use:enhance={({ formData, cancel }) => {
-			if (review) {
-				if (formData.has('confirmAll')) confirmAll(review.attributes);
-				const attributes = confirmedAttributes(review.attributes);
-				if (attributes === null) {
-					reviewTried = true;
-					cancel();
-					return;
-				}
-				formData.set('attributes', attributes);
-			}
-			return async ({ result, update }) => {
-				await update();
-				if (result.type !== 'success') return;
-				review = null; // saved: the next item starts from scratch
-				clearPhoto();
-			};
-		}}
-	>
-		{#if review}
-			<!-- the photo next to what was recognised in it -->
-			<div class="review">
-				{#if preview}<img src={preview} alt="Nuotrauka, kurioje atpažintas daiktas" />{/if}
-				<div>
-					<p class="notice" role="status">
-						Daiktą atpažino dirbtinis intelektas (tikrumas {review.confidence} %). Patikrink pavadinimą, kategoriją ir
-						požymius: į inventorių pateks tik tai, ką patvirtinsi.
-						{#if needsCheck(review.confidence)}<span class="tag tag-warning">Patikrinkite</span>{/if}
-					</p>
-					{@render itemForm()}
-				</div>
-			</div>
-		{:else}
-			{@render itemForm()}
-		{/if}
-	</form>
-</details>
-
-{#snippet itemForm()}
-	{#if form?.duplicate}
-		<p class="notice notice-warning" role="alert">
-			Daiktas „{form.values.name}“ inventoriuje jau yra. Vis tiek pridėti dar vieną?
-		</p>
-	{/if}
-	<ItemFields values={addValues} errors={form?.errors ?? {}} attributes={review ? reviewAttributes : undefined} />
-	<div class="actions">
-		{#if form?.duplicate}
-			<button name="duplicateOk" value="1">Išsaugoti vis tiek</button>
-		{:else if review}
-			<button name="confirmAll" value="1">Patvirtinti visus</button>
-			<button class="button-secondary">Išsaugoti</button>
-		{:else}
-			<button>Išsaugoti</button>
-		{/if}
-		{#if review}
-			<!-- rejecting the whole item saves nothing -->
-			<button type="button" class="button-ghost" onclick={discardReview}>Atmesti daiktą</button>
-		{:else if form?.duplicate}
-			<a class="button button-secondary" href={resolve('/(app)/inventory')}>Atšaukti</a>
-		{/if}
 	</div>
-{/snippet}
 
-{#snippet reviewAttributes()}
-	{#if review}
-		<fieldset class="review-attributes">
-			<legend>Kiti požymiai</legend>
-			{#if review.attributes.length}
-				<p class="field-hint">Patvirtink, pataisyk arba atmesk kiekvieną požymį.</p>
+	<div class="add-body">
+		<!-- the other way to add: beside the form on wide screens, above it on phones -->
+		<aside class="add-side">
+			{#if mode === 'text'}
+				{#if ai && preview}<img src={preview} alt="Nuotrauka, iš kurios užpildyti laukai" />{/if}
+				<p>
+					{ai
+						? 'Ne tas daiktas? Įkelk kitą nuotrauką.'
+						: 'Turi nuotrauką? Dirbtinis intelektas atpažins daiktą ir užpildys laukus už tave.'}
+				</p>
+				<button type="button" onclick={() => (mode = 'photo')}>
+					<svg viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" />
+					</svg>
+					{ai ? 'Kita nuotrauka' : 'Pridėti iš nuotraukos'}
+				</button>
 			{:else}
-				<p class="field-hint">Kitų požymių nuotraukoje neatpažinta.</p>
+				<p>Nori įvesti pats? Užpildyk laukus ranka.</p>
+				<button type="button" onclick={() => (mode = 'text')}>Įvesti ranka</button>
 			{/if}
-			<ul>
-				{#each review.attributes as attribute, i (i)}
-					{@const text = attributeText(attribute)}
-					<li class:undecided={reviewTried && (attribute.draft || attribute.status === 'pending')}>
-						{#if attribute.draft}
-							<div class="field">
-								<label for="review-name-{i}">Požymis</label>
-								<input
-									id="review-name-{i}"
-									maxlength={ITEM_LIMITS.attributeText}
-									bind:value={attribute.draft.name}
-									onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), finishEdit(attribute))}
-									{@attach (input) => input.focus()}
-								/>
-							</div>
-							<div class="field">
-								<label for="review-value-{i}">Reikšmė (neprivaloma)</label>
-								<input
-									id="review-value-{i}"
-									maxlength={ITEM_LIMITS.attributeText}
-									bind:value={attribute.draft.value}
-									onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), finishEdit(attribute))}
-								/>
-							</div>
-							<div class="actions">
-								<button
-									type="button"
-									class="button-secondary"
-									disabled={!attribute.draft.name.trim()}
-									onclick={() => finishEdit(attribute)}>Patvirtinti</button
-								>
-								<button type="button" class="button-ghost" onclick={() => (attribute.draft = undefined)}>
-									Atšaukti
-								</button>
-							</div>
-						{:else}
-							<p>
-								<span class:rejected={attribute.status === 'rejected'}>{text}</span>
-								{#if attribute.status === 'confirmed'}<span class="tag tag-success">Patvirtinta</span>
-								{:else if attribute.status === 'rejected'}<span class="tag">Atmesta</span>{/if}
-							</p>
-							<div class="actions">
-								<button
-									type="button"
-									class="button-secondary"
-									aria-pressed={attribute.status === 'confirmed'}
-									onclick={() => (attribute.status = 'confirmed')}
-								>
-									Patvirtinti<span class="visually-hidden"> „{text}“</span>
-								</button>
-								<button
-									type="button"
-									class="button-ghost"
-									onclick={() => (attribute.draft = { name: attribute.name, value: attribute.value })}
-								>
-									Redaguoti<span class="visually-hidden"> „{text}“</span>
-								</button>
-								<button
-									type="button"
-									class="button-ghost"
-									aria-pressed={attribute.status === 'rejected'}
-									onclick={() => (attribute.status = 'rejected')}
-								>
-									Atmesti<span class="visually-hidden"> „{text}“</span>
-								</button>
-							</div>
-						{/if}
-					</li>
-				{/each}
-			</ul>
-			{#if reviewTried && undecided.length}
-				<p class="field-error" role="alert">
-					Patvirtink arba atmesk kiekvieną požymį – arba spausk „Patvirtinti visus“.
+		</aside>
+
+		<!-- UC-3: one photo; the server checks type and size and converts it -->
+		<form
+			hidden={mode !== 'photo'}
+			method="POST"
+			action="?/recognize"
+			enctype="multipart/form-data"
+			novalidate
+			use:enhance={() => {
+				recognizing = true;
+				photoNote = undefined; // show what the server says about this attempt
+				return async ({ update }) => {
+					await update({ reset: false }); // keep the photo for a retry or another look
+					recognizing = false;
+					if (!form?.recognized) return;
+					ai = { confidence: form.recognized.confidence };
+					mode = 'text';
+					setTimeout(() => document.getElementById('item-name')?.focus()); // after SvelteKit's focus reset
+				};
+			}}
+		>
+			{#if form?.notRecognized}
+				<p class="notice notice-warning" role="status">
+					Daikto atpažinti nepavyko. Fotografuok šviesioje vietoje, po vieną daiktą kadre, arba įvesk daiktą ranka.
 				</p>
 			{/if}
-			{#if form?.errors?.attributes}<p class="field-error">{form.errors.attributes}</p>{/if}
-		</fieldset>
-	{/if}
-{/snippet}
+			<div class="field">
+				<label for="item-photo">Įkelti iš galerijos</label>
+				<input
+					bind:this={photoInput}
+					id="item-photo"
+					name="photo"
+					type="file"
+					accept="image/jpeg,image/png,image/heic,image/heif,.heic,.heif"
+					aria-invalid={photoError ? 'true' : undefined}
+					aria-describedby={photoError ? 'item-photo-hint item-photo-error' : 'item-photo-hint'}
+					onchange={(e) => showPhoto(e.currentTarget.files?.[0])}
+					oncancel={() => (galleryHelp = true)}
+				/>
+				<p class="field-hint" id="item-photo-hint">JPG, PNG arba HEIC iki 10 MB. Vienoje nuotraukoje – vienas daiktas.</p>
+				{#if photoError}<p class="field-error" id="item-photo-error">{photoError}</p>{/if}
+			</div>
+			{#if preview}
+				<figure class="preview">
+					{#if converting}
+						<p class="field-hint"><span class="spinner" aria-hidden="true"></span> Ruošiama peržiūra…</p>
+					{:else}
+						<img src={preview} alt="Pasirinkta nuotrauka" onerror={convertPreview} />
+					{/if}
+					<figcaption class="field-hint">Ne ta nuotrauka? Pasirink kitą – ji pakeis šią.</figcaption>
+				</figure>
+			{/if}
+			<!-- FR-18 -->
+			<!-- ponytail: a page can't ask whether gallery access was denied. A closed picker ("cancel") is the closest
+			     signal, so it opens this help; the help is always one tap away for pickers that never open at all. -->
+			<details class="gallery-help" bind:open={galleryHelp}>
+				<summary>Neatsidaro galerija?</summary>
+				<p>
+					Gali būti, kad naršyklė neturi leidimo naudotis nuotraukomis. Suteik jį telefono nustatymuose ir pasirink
+					nuotrauką dar kartą:
+				</p>
+				<ul>
+					<li>
+						<strong>Android:</strong> „Nustatymai“ → „Programos“ → tavo naršyklė (pvz., Chrome) → „Leidimai“ →
+						„Nuotraukos ir vaizdo įrašai“ (senesniuose telefonuose – „Saugykla“) → „Leisti“.
+					</li>
+					<li>
+						<strong>iPhone:</strong> „Nustatymai“ → „Programos“ → tavo naršyklė (pvz., Safari ar Chrome) →
+						„Nuotraukos“ arba „Kamera“ → „Leisti“.
+					</li>
+				</ul>
+				<p>Jei vis tiek nepavyksta, įvesk daiktą ranka.</p>
+			</details>
+			<div class="actions">
+				<button class="button-cta" disabled={recognizing || converting || !preview}>
+					{#if recognizing}<span class="spinner" aria-hidden="true"></span> Atpažįstama…
+					{:else if retry}Bandyti dar kartą{:else}Generuoti{/if}
+				</button>
+				<button type="button" class="button-ghost" command="close" commandfor="add-dialog">Atšaukti</button>
+			</div>
+		</form>
+
+		<!-- UC-2, also the review of a recognised item. novalidate: the server checks everything and answers in Lithuanian -->
+		<form
+			hidden={mode !== 'text'}
+			bind:this={addForm}
+			method="POST"
+			action="?/create"
+			novalidate
+			use:enhance={() =>
+				async ({ result, update }) => {
+					await update();
+					if (result.type === 'success') addDialog.close(); // resetAdd does the rest
+				}}
+		>
+			{#if ai}
+				<p class="notice" role="status">
+					Laukus užpildė dirbtinis intelektas (tikrumas {ai.confidence} %). Patikrink ir pataisyk juos: į inventorių
+					daiktas pateks tik paspaudus „Išsaugoti“.
+					{#if ai.confidence < RECOGNITION_CHECK_BELOW}<span class="tag tag-warning">Patikrinkite</span>{/if}
+				</p>
+			{/if}
+			{#if form?.duplicate}
+				<p class="notice notice-warning" role="alert">
+					Daiktas „{form.values.name}“ inventoriuje jau yra. Vis tiek pridėti dar vieną?
+				</p>
+			{/if}
+			<ItemFields
+				values={addValues}
+				errors={form?.errors ?? {}}
+				attributeNames={[...inventoryTags.values()].map((a) => a.name)}
+			/>
+			<div class="actions">
+				{#if form?.duplicate}
+					<button class="button-cta" name="duplicateOk" value="1">Išsaugoti vis tiek</button>
+				{:else}
+					<button class="button-cta">Išsaugoti</button>
+				{/if}
+				<button type="button" class="button-ghost" command="close" commandfor="add-dialog">Atšaukti</button>
+			</div>
+		</form>
+	</div>
+</dialog>
 
 {#if data.items.length}
 	<search class="toolbar">
@@ -391,6 +318,20 @@
 			<select id="filter-category" bind:value={category}>
 				<option value="">Visos kategorijos</option>
 				{#each ITEM_CATEGORIES as c (c)}<option value={c}>{CATEGORY_LABELS[c]}</option>{/each}
+			</select>
+		</div>
+		<div class="field">
+			<label for="filter-tag">Filtruoti pagal požymį</label>
+			<select id="filter-tag" bind:value={tag}>
+				<option value="">Visi požymiai</option>
+				{#each [...tagGroups] as [group, attributes] (group)}
+					<optgroup label={group ? attributes[0].name : 'Be reikšmės'}>
+						{#each attributes as attribute (tagKey(attribute))}
+							<!-- full text: the closed <select> shows only the option, and "ruda" alone says little -->
+							<option value={tagKey(attribute)}>{attributeText(attribute)}</option>
+						{/each}
+					</optgroup>
+				{/each}
 			</select>
 		</div>
 		<div class="field">
@@ -409,7 +350,7 @@
 	</p>
 
 	{#if shown.length === 0}
-		<p class="notice">Daiktų nerasta. Pakeisk paieškos žodį arba kategoriją.</p>
+		<p class="notice">Daiktų nerasta. Pakeisk paieškos žodį, kategoriją arba požymį.</p>
 	{/if}
 
 	<ul class="items">
@@ -423,8 +364,10 @@
 					{/each}
 				</p>
 				{#if item.attributes.length}
-					<p class="attributes">
-						{item.attributes.map(attributeText).join(' · ')}
+					<p class="tags">
+						{#each groupAttributes(item.attributes) as { attribute, hue } (attribute)}
+							<span class="tag" class:tag-hue={hue !== undefined} style:--hue={hue}>{attributeText(attribute)}</span>
+						{/each}
 					</p>
 				{/if}
 				<div class="actions">
@@ -473,12 +416,114 @@
 </dialog>
 
 <style>
-	details {
-		margin-bottom: var(--space-6);
+	.page-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: var(--space-4);
+		margin-bottom: var(--space-5);
 	}
-	details form {
-		max-width: 36rem;
-		margin-top: var(--space-4);
+	.page-head p {
+		margin: 0;
+	}
+	.page-head > button {
+		flex: 1 1 100%; /* full width on phones: the main action of the page */
+	}
+	@media (min-width: 40rem) {
+		.page-head > button {
+			flex: none;
+		}
+	}
+	button svg {
+		width: 1.25em;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2.5;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+	.empty {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-3);
+	}
+	.empty p {
+		margin: 0;
+	}
+
+	/* The add popup: wide enough for the form plus the photo option beside it */
+	.add-dialog {
+		width: min(54rem, calc(100vw - 1rem));
+		max-height: calc(100dvh - 1rem);
+		padding: var(--space-4);
+		border-top: 6px solid var(--c-cta);
+	}
+	.add-dialog[open] {
+		animation: pop-in 0.18s ease-out;
+	}
+	@keyframes pop-in {
+		from {
+			opacity: 0;
+			translate: 0 0.75rem;
+			scale: 0.98;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.add-dialog[open] {
+			animation: none;
+		}
+	}
+	.add-dialog::backdrop {
+		backdrop-filter: blur(3px);
+	}
+	@media (min-width: 40rem) {
+		.add-dialog {
+			padding: var(--space-6);
+		}
+	}
+	.add-head {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: var(--space-3);
+	}
+	.close {
+		flex: none;
+		width: 2.75rem;
+		padding: 0;
+	}
+	.add-body {
+		display: grid;
+		gap: var(--space-5);
+		align-items: start;
+	}
+	@media (min-width: 48rem) {
+		.add-body {
+			grid-template-columns: 1fr 17rem;
+		}
+		.add-side {
+			grid-column: 2;
+			grid-row: 1;
+		}
+	}
+	.add-side {
+		display: grid;
+		gap: var(--space-3);
+		padding: var(--space-4);
+		background: var(--c-primary-soft);
+		border-radius: var(--radius-l);
+	}
+	.add-side p {
+		margin: 0;
+		font-size: var(--text-s);
+	}
+	.add-side img {
+		max-height: 12rem;
+		margin-inline: auto;
+		border-radius: var(--radius-m);
 	}
 	.preview {
 		margin: 0 0 var(--space-3);
@@ -491,44 +536,7 @@
 		margin-bottom: var(--space-4);
 		font-size: var(--text-s);
 	}
-	details form.wide {
-		max-width: 56rem;
-	}
-	.review {
-		display: grid;
-		gap: var(--space-4);
-		align-items: start;
-	}
-	@media (min-width: 48rem) {
-		.review {
-			grid-template-columns: 16rem 1fr; /* photo beside the recognised fields */
-		}
-	}
-	.review img {
-		border-radius: var(--radius-m);
-	}
-	.review-attributes ul {
-		display: grid;
-		gap: var(--space-3);
-		padding: 0;
-		list-style: none;
-	}
-	.review-attributes li {
-		margin: 0;
-		padding: var(--space-3);
-		border: 1px solid var(--c-line);
-		border-radius: var(--radius-m);
-	}
-	.review-attributes li.undecided {
-		border-color: var(--c-danger);
-	}
-	.review-attributes p {
-		margin-bottom: var(--space-2);
-	}
-	.rejected {
-		color: var(--c-text-muted);
-		text-decoration: line-through;
-	}
+
 	.toolbar {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
@@ -540,7 +548,7 @@
 	}
 	@media (min-width: 48rem) {
 		.toolbar {
-			grid-template-columns: 2fr 1fr 1fr;
+			grid-template-columns: 2fr 1fr 1fr 1fr;
 		}
 		.query {
 			grid-column: auto;
@@ -566,7 +574,7 @@
 	.items .actions {
 		margin-top: auto; /* buttons line up along the bottom of each row */
 	}
-	h2 {
+	.items h2 {
 		margin-bottom: var(--space-2);
 		font-size: var(--text-xl);
 	}
@@ -578,10 +586,6 @@
 		flex-wrap: wrap;
 		gap: var(--space-1);
 		margin-bottom: var(--space-2);
-	}
-	.attributes {
-		font-size: var(--text-s);
-		color: var(--c-text-muted);
 	}
 	.actions {
 		display: flex;

@@ -58,6 +58,8 @@
 	--c-on-forest: #e6ecdf;
 	--c-on-forest-muted: #a9b8a4;
 	--c-accent: #c9d66b; /* lichen, only on forest surfaces */
+	--c-cta: #3ad06a; /* bright "add" green: .button-cta only, dark text on it (8:1) */
+	--c-on-cta: #0b2414;
 
 	--c-danger: light-dark(#a8361f, #ef8f7b);
 	--c-on-danger: light-dark(#ffffff, #2a0f0a);
@@ -404,6 +406,16 @@ legend {
 .button-danger:hover {
 	background: color-mix(in srgb, var(--c-danger) 85%, black);
 }
+/* Bright call to action ("Pridėti daiktą"): stands out from the spruce buttons in both themes */
+.button-cta {
+	color: var(--c-on-cta);
+	background: var(--c-cta);
+	border-color: color-mix(in srgb, var(--c-cta) 70%, black);
+	box-shadow: 0 6px 16px -6px color-mix(in srgb, var(--c-cta) 80%, transparent);
+}
+.button-cta:hover {
+	background: color-mix(in srgb, var(--c-cta) 82%, white);
+}
 .button-large {
 	min-height: 3.25rem;
 	padding: 0.875rem 1.75rem;
@@ -437,6 +449,12 @@ legend {
 .tag-success {
 	color: var(--c-success);
 	background: var(--c-success-soft);
+}
+
+/* Item attributes: one colour per attribute name, style="--hue: <deg>" (groupAttributes() picks it) */
+.tag-hue {
+	color: light-dark(oklch(38% 0.1 var(--hue)), oklch(88% 0.07 var(--hue)));
+	background: light-dark(oklch(93% 0.045 var(--hue)), oklch(32% 0.06 var(--hue)));
 }
 
 /* Notices: disclaimers, form errors, success messages. Add role="status" or role="alert". */

@@ -25,6 +25,9 @@ export async function listItems(userId: string) {
 	return items.map(toItem);
 }
 
+/** Attribute names the user already uses: "Požymis" suggestions on the edit page (the list page has every item anyway). */
+export const listAttributeNames = (userId: string) => Item.distinct('attributes.name', { userId }) as Promise<string[]>;
+
 export async function getItem(userId: string, itemId: string) {
 	const filter = mine(userId, itemId);
 	const item = filter && (await Item.findOne(filter).lean<ItemRecord>());

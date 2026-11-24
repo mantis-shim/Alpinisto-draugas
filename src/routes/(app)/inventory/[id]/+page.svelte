@@ -14,7 +14,11 @@
 
 <!-- novalidate: the server checks everything and answers in Lithuanian -->
 <form method="POST" novalidate use:enhance>
-	<ItemFields values={form?.values ?? itemFormValues(data.item)} errors={form?.errors ?? {}} />
+	<ItemFields
+		values={form?.values ?? itemFormValues(data.item)}
+		errors={form?.errors ?? {}}
+		attributeNames={data.attributeNames}
+	/>
 	<div class="actions">
 		<button>Išsaugoti</button>
 		<a class="button button-secondary" href={resolve('/(app)/inventory')}>Atšaukti</a>

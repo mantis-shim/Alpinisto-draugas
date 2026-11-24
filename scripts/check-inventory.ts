@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import mongoose from 'mongoose';
 import { Item } from '#lib/server/models.ts';
 import { createItem, deleteItem, getItem, hasItemNamed, listItems, updateItem } from '#lib/server/inventory.ts';
-import { parseAttributes, readItemForm } from '#lib/validation.ts';
+import { groupAttributes, parseAttributes, readItemForm, typedAttribute } from '#lib/validation.ts';
 
 // "Kiti požymiai" textarea: browsers submit \r\n, values may contain ":"
 assert.deepEqual(parseAttributes('spalva: ruda\r\n\r\n neperšlampamas \r\nišvykimas: 10:30\r\n: be pavadinimo'), [
@@ -24,6 +24,30 @@ assert.ok(form({ name: 'a'.repeat(100) }).ok, '100 characters is fine');
 assert.ok(form({ name: long }).errors.name, 'name too long');
 assert.ok(form({ name: 'X', attributes: Array(31).fill('a').join('\n') }).errors.attributes, 'too many attributes');
 assert.ok(form({ name: 'X', attributes: `spalva: ${long}` }).errors.attributes, 'attribute value too long');
+
+// Tag chips: one field per tag plus the one being typed, all read together
+const tags = new FormData();
+tags.set('name', 'X');
+tags.set('category', 'OTHER');
+for (const tag of ['spalva: ruda', 'neperšlampamas', 'Spalva: juoda']) tags.append('attributes', tag);
+assert.equal(readItemForm(tags).input.attributes.length, 3);
+// The "Požymis" + "Reikšmė" pair still being typed is saved too
+tags.set('attributeName', ' svoris: ');
+tags.set('attributeValue', ' 1:2 kg ');
+assert.deepEqual(readItemForm(tags).input.attributes.at(-1), { name: 'svoris', value: '1:2 kg' }, '":" only splits once');
+assert.deepEqual(typedAttribute('', ' sunkus '), { name: 'sunkus', value: '' }, 'a value alone is a plain tag');
+assert.equal(typedAttribute(' ', ' '), null);
+tags.delete('attributeName');
+tags.delete('attributeValue');
+// Same name together in one colour (case and Lithuanian letters ignored), valueless tags last and uncoloured
+const grouped = groupAttributes(readItemForm(tags).input.attributes);
+assert.deepEqual(
+	grouped.map((g) => `${g.attribute.name}:${g.attribute.value}`),
+	['spalva:ruda', 'Spalva:juoda', 'neperšlampamas:']
+);
+assert.equal(grouped[0].hue, grouped[1].hue);
+assert.equal(grouped[2].hue, undefined);
+assert.notEqual(groupAttributes(parseAttributes('a: 1\nb: 2'))[1].hue, grouped[0].hue, 'another name, another colour');
 
 if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI is not set (see .env.example)');
 await mongoose.connect(process.env.MONGODB_URI);
