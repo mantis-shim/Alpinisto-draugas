@@ -37,7 +37,7 @@ Users: individual hikers, no IT skills assumed, often on a phone with a slow con
 | Language | TypeScript | `npm run check` must pass |
 | Server | `@sveltejs/adapter-node` on Node 24 | Linux in production |
 | Database | MongoDB 8 + Mongoose 9 | Document model: **no foreign keys, no joins**. Embed, or link by `userId`. |
-| External LLM | Anthropic API, `@anthropic-ai/sdk` (not installed yet), model `claude-opus-5-5` | Generates recommendations (UC-7). See **LLM notes**. |
+| External LLM | Google Gemini API, `@google/genai`, model from `GEMINI_MODEL` (default `gemini-flash-latest`) | Generates recommendations (UC-7). See **LLM notes**. |
 | Local vision model | llama.cpp `llama-server`, OpenAI-compatible HTTP API at `LLAMA_URL` | Recognises items in photos (UC-3). Runs on a **separate team device** reached over the network, not in Docker. Photos never go to third parties. |
 | Lint | ESLint (`npm run lint`) | Must pass |
 | Weather | **No weather API** (team decision) | The LLM estimates typical conditions from location + dates. The UI must say the weather info is an estimate. |
@@ -45,7 +45,7 @@ Users: individual hikers, no IT skills assumed, often on a phone with a slow con
 ## Running (dev)
 
 ```sh
-cp .env.example .env          # fill ANTHROPIC_API_KEY
+cp .env.example .env          # fill GEMINI_API_KEY (or RECOMMENDATIONS_MOCK=ok to test without a key)
 docker compose up             # app http://localhost:5173, MongoDB localhost:27017 (no auth, dev only)
 docker compose exec app npm install <pkg>   # add a dependency (updates package.json + container)
 docker compose exec app npm run db:seed     # demo user demo@example.com / Demo1234 (re-runnable)
@@ -53,6 +53,7 @@ docker compose down -v        # stop and wipe DB + container node_modules
 npm run check:auth            # self-check: password hashing + registration rules (plain Node, no DB)
 docker compose exec app npm run check:inventory   # self-check: inventory CRUD + item form rules against the dev DB (cleans up after itself)
 npm run check:trip            # self-check: trip form rules, duration, season, far-date warning (plain Node, no DB)
+npm run check:recommendations # self-check: UC-7 request contents, answer checks and mapping, mock answer (no API, no DB)
 npm ci                        # on the host too: the container's node_modules is a separate volume, so the editor needs its own copy for types
 npm run check:fitness         # self-check: questionnaire validation + fitness level formula (plain Node, no DB)
 docker compose exec app npm run check:photo         # self-check: photo upload rules + WebP preview + HEIC -> PNG for the model (no DB)
@@ -74,6 +75,7 @@ docker compose exec app npm run check:recognition   # self-check: llama-server r
   UC-3 flow; `check:recognition` tests the same ones).
   The model sits behind `RecognitionModel` (`src/lib/server/llama_api/recognition.ts`): `llamaModel` is the real one, `mockModel` the stand-in.
 - A variable added to `src/env.ts` is only read when the dev server starts: `docker compose restart app` after adding one.
+- After changing `.env`, run `docker compose up -d`, not `restart`: compose reads `env_file` only when it creates the container.
 - Photo uploads (UC-3): `src/lib/server/photo.ts` checks type/size by content (`readPhoto`) and re-encodes every photo in
   memory with sharp: upright, ≤ 1024 px, no metadata, at most 50 Mpx decoded (a small file can declare a huge image).
   `photoToWebp` is the browser preview. **llama-server reads only JPG and PNG** (WebP/HEIC: HTTP 400), so `photoForModel` keeps
@@ -160,7 +162,7 @@ FitnessLevel  = LOW | MEDIUM | HIGH   (UI: žemas / vidutinis / aukštas)
 |---|---|---|
 | `/` | visitors | landing page; logged-in users are redirected to `/plan`; `/?deleted` shows "account deleted" |
 | `(auth)/login`, `(auth)/register` | visitors | UC-1 + UC-12 consent; logged-in users are redirected to `/plan` |
-| `(app)/plan` | logged in | UC-6: the open trip's summary ("Keisti", disabled "Generuoti rekomendacijas"), or the trip form (`?/save`) when there is none |
+| `(app)/plan` | logged in | UC-6: the open trip's summary ("Keisti", "Generuoti rekomendacijas" → `?/generate`, UC-7), or the trip form (`?/save`) when there is none |
 | `(app)/inventory` | logged in | bright "Pridėti daiktą" button opens a `<dialog>`: UC-2 text form (`?/create`, duplicate warning) with "Pridėti iš nuotraukos" beside it (UC-3 `?/recognize` → "Generuoti" pre-fills the same text form; "Generuoti iš naujo" beside the photo sends `regenerate`) + UC-4 list with search/filter/sort in the browser, delete with a `<dialog>` (`?/delete`) |
 | `(app)/inventory/preview` | logged in | `POST` a photo, get the WebP back: preview for photos the browser can't show (HEIC outside Safari) |
 | `(app)/inventory/[id]` | logged in | UC-4 edit one item; someone else's id gets the same 404 as a missing one |
@@ -263,8 +265,7 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
     (location, dates, duration, season, far-date warning) with "Keisti" (back to the filled form, updates the same trip)
     and "Generuoti rekomendacijas". With no open trip, `/plan` shows an empty form. Trips with `plan` belong to the
     trip history (UC-11) and are never edited.
-  - "Generuoti rekomendacijas" is disabled with the note "Rekomendacijų generavimas dar kuriamas." until UC-7 is built.
-    UC-7 enables it and generates the plan for the open trip, which then moves to the history.
+  - "Generuoti rekomendacijas" generates the plan for the open trip (UC-7), which then moves to the history.
 
 ### UC-7 Generate recommendations (US-3, 15–20; Vincentas, Naglis, Danielius, S2) FR-39–48
 - Needs consent (UC-12). Collect trip details, fitness level and inventory into **one** LLM request, with a loading indicator while it runs.
@@ -281,6 +282,21 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
   - Wherever data is insufficient, say so. If there's no reliable information about the place, leave the description out. **Never invent facts.**
 - LLM error or timeout: show an error with "Bandyti dar kartą".
 - Save the result automatically to history with location + dates.
+- The only code that calls the LLM is `src/lib/server/gemini/`:
+  - `recommendation-format.ts` (no SDK, no DB): the system prompt, the JSON schema, the request (trip, fitness level,
+    inventory as JSON; inventory items get short keys `d1`, `d2`, ... so no database id is sent) and `parseRecommendations`,
+    which checks the answer and maps it to `plan.recommendations` (see "Data model"; `getTripRecommendations`
+    reads it). Owned items keep the inventory's own name and category and get `inventoryItemId`; unknown or repeated keys
+    are dropped. Enums are upper-cased; an unknown category becomes OTHER, an unknown priority RECOMMENDED. An empty
+    `locationDescription` is left out (FR-45). An invalid answer is never stored.
+  - `recommendations.ts`: `generateRecommendations(userId, { apiKey, model, mock })` checks the open trip and the latest
+    consent (FR-8, FR-10), calls Gemini (see LLM notes for retries) and sets `plan` only on a trip that still has none, so a second
+    click can't overwrite it. Errors are `GenerationError` with a Lithuanian message and `retry` ("Bandyti dar kartą").
+    `generationNotes` gives the summary its warnings: no consent (button disabled), empty inventory (2a: the warning is
+    next to the button, clicking it is the confirmation), no questionnaire (2b, link to the questionnaire).
+  - `/plan` `?/generate` redirects to `/recommendations/[id]` (UC-8). A spinner shows while the request runs.
+  - Without a key: `RECOMMENDATIONS_MOCK=ok|error|refusal` in `.env` (restart the app). With neither, the button says
+    generation is off.
 
 ### UC-8 View recommendations (S2) FR-49–52
 - Always show the disclaimer: these are only tips and may be inaccurate.
@@ -353,15 +369,26 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
 - The landing page (`src/routes/+page.svelte`) shows the app's 4 steps as waypoints on a mountain trail. Keep that the
   only decorative moment, and keep other pages quiet.
 
-## LLM notes (Anthropic, Claude Opus 5.5)
+## LLM notes (Google Gemini)
 
-- Package `@anthropic-ai/sdk`, model ID `claude-opus-5-5` (exact string, no date suffix). Read `ANTHROPIC_API_KEY` from env, server side only.
-- Use **structured outputs** (`output_config.format` / `client.messages.parse()`) so the reply maps straight to the
-  `recommendations` shape. Still validate it before saving.
-- Opus 5.5: thinking is always on. Don't send `thinking: {type: "disabled"}` or `budget_tokens` (400). Tune depth with
-  `output_config.effort` (default `medium`). No assistant prefill, no forced `tool_choice` (`any`/`tool` returns 400).
-- Check `stop_reason` (handle `"refusal"`, `"max_tokens"`) before reading content. Use the SDK's typed errors
-  (`Anthropic.RateLimitError`, `Anthropic.APIError`, ...) for the retry UX.
+- **Google Gemini instead of Anthropic** (free tier for the course project). Package
+  `@google/genai`. `GEMINI_API_KEY` from env, server side only; every team member creates their own key in Google AI Studio
+  (aistudio.google.com → Get API key) and puts it in their own `.env`. `GEMINI_MODEL` picks the model, default
+  `gemini-flash-latest` (Google's alias for the newest Flash model).
+- The registration text names Anthropic as the AI provider. Change it to
+  Google and check the Gemini terms for free-tier data use (GDPR).
+- Structured output: `config.responseMimeType: 'application/json'` + `config.responseJsonSchema` (standard JSON Schema),
+  `config.systemInstruction` for the prompt, read `response.text`. Gemini silently drops schema keywords it doesn't support,
+  so the answer is always validated before saving (`parseRecommendations`).
+- Check `candidates[0].finishReason` (anything but STOP / MAX_TOKENS, or `promptFeedback.blockReason`, means blocked) and
+  `ApiError.status` (429 = free-tier quota, other 4xx = wrong key/model/request, 5xx = retry).
+- Use API version `v1beta` (`new GoogleGenAI({ apiVersion: 'v1beta' })`): on `v1` the `-latest` aliases answer 404.
+- Free tier is unreliable: 503 "high demand" and 504 are common, and each model has a **daily limit per project**
+  (e.g. 20 requests/day for the Flash model, resets around 10:00 Vilnius time). So `askModel` makes 2 attempts:
+  `GEMINI_MODEL` (default `gemini-flash-latest`), then after 2 s `gemini-flash-lite-latest` (its own quota), 45 s each.
+  Team decision: no more, so the user doesn't wait long and the quota lasts; "Bandyti dar kartą" starts over.
+- Save the quota: test the UI with `RECOMMENDATIONS_MOCK=ok`, call the real API only to check real answers.
+  Keys start with `AQ.` (Google's new format). A new key in the **same** project shares that project's limit.
 - Send only what's needed: trip details, fitness level, inventory. **Never** email, password or user IDs.
   An item attribute without a value is a "yes" ("neperšlampamas" = waterproof), so say so in the prompt.
 - Write the prompt in a way that makes the model answer in Lithuanian, state missing data explicitly, and not invent facts.

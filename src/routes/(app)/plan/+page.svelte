@@ -1,11 +1,14 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { resolve } from '$app/paths';
 	import { SEASON_LABELS } from '#lib/trip.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
 	// "Keisti" opens the form for the saved trip (UC-6 7a); a successful save closes it again.
 	let editing = $state(false);
+	// UC-7: true while the LLM request runs (it can take up to a minute)
+	let generating = $state(false);
 
 	const showForm = $derived(!data.trip || editing);
 	const errors = $derived(form?.errors ?? {});
@@ -123,12 +126,51 @@
 			</p>
 		{/if}
 
-		<div class="actions">
-			<button class="button-secondary" type="button" onclick={() => (editing = true)}>Keisti</button>
-			<!-- ponytail: enabled by UC-7 (recommendations), which isn't built yet -->
-			<button type="button" disabled aria-describedby="generate-note">Generuoti rekomendacijas</button>
-		</div>
-		<p class="field-hint" id="generate-note">Rekomendacijų generavimas dar kuriamas.</p>
+		{#if data.notes && !data.notes.consent}
+			<p class="notice notice-danger" role="alert">
+				Rekomendacijoms reikia duomenų tvarkymo sutikimo. Be jo kelionės duomenų dirbtiniam intelektui nesiunčiame.
+			</p>
+		{/if}
+		{#if data.notes?.emptyInventory}
+			<p class="notice notice-warning" role="status">
+				Tavo inventorius tuščias, todėl reikalingų daiktų sąraše bus visi žygiui reikalingi daiktai.
+				<a href={resolve('/(app)/inventory')}>Pridėti daiktą</a>
+			</p>
+		{/if}
+		{#if data.notes?.noQuestionnaire}
+			<p class="notice notice-warning" role="status">
+				Fizinio pasirengimo klausimynas neužpildytas, todėl žygio sudėtingumo palyginimas su tavo pasirengimu bus
+				ribotas. <a href={resolve('/(app)/questionnaire')}>Užpildyti klausimyną</a>
+			</p>
+		{/if}
+
+		{#if form?.generateError && !generating}
+			<p class="notice notice-danger" role="alert">{form.generateError}</p>
+		{/if}
+
+		<form
+			class="actions"
+			method="POST"
+			action="?/generate"
+			use:enhance={() => {
+				generating = true;
+				return async ({ update }) => {
+					await update();
+					generating = false;
+				};
+			}}
+		>
+			<button class="button-secondary" type="button" disabled={generating} onclick={() => (editing = true)}>Keisti</button>
+			<button type="submit" disabled={generating || !data.notes?.consent}>
+				{form?.retry && !generating ? 'Bandyti dar kartą' : 'Generuoti rekomendacijas'}
+			</button>
+		</form>
+		{#if generating}
+			<p class="generating" role="status">
+				<span class="spinner" aria-hidden="true"></span>
+				Rekomendacijos generuojamos. Tai gali užtrukti iki minutės.
+			</p>
+		{/if}
 	</section>
 {/if}
 
@@ -139,6 +181,12 @@
 		grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
 		align-items: start;
 		gap: 0 var(--space-5);
+	}
+	.generating {
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+		margin-top: var(--space-4);
 	}
 	.actions {
 		display: flex;

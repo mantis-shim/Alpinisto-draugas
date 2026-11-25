@@ -21,7 +21,8 @@
 		"check:photo": "node scripts/check-photo.ts",
 		"check:recognition": "node scripts/check-recognition.ts",
 		"check:inventory": "node --env-file-if-exists=.env scripts/check-inventory.ts",
-		"check:trip": "node scripts/check-trip.ts"
+		"check:trip": "node scripts/check-trip.ts",
+		"check:recommendations": "node scripts/check-recommendations.ts"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",
@@ -40,6 +41,7 @@
 	},
 	"dependencies": {
 		"@fontsource-variable/archivo": "^5.3.0",
+		"@google/genai": "^3.6.1",
 		"libheif-js": "^1.23.5",
 		"mongoose": "^9.12.1",
 		"pdf-lib": "^1.17.1",

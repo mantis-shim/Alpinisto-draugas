@@ -2,6 +2,11 @@
 // Add new variables here and to .env.example (without values).
 import { defineEnvVars } from '@sveltejs/kit/env';
 import { MOCK_RESPONSES, isMockScenario, type MockScenario } from '#lib/server/llama_api/recognition-mocks.ts';
+import {
+	MOCK_SCENARIOS as RECOMMENDATION_MOCKS,
+	isMockScenario as isRecommendationMock,
+	type MockScenario as RecommendationMock
+} from '#lib/server/gemini/recommendation-format.ts';
 
 export const variables = defineEnvVars({
 	MONGODB_URI: {
@@ -26,6 +31,25 @@ export const variables = defineEnvVars({
 		schema: (value) => {
 			if (value && !isMockScenario(value)) throw new Error(`RECOGNITION_MOCK must be one of: ${Object.keys(MOCK_RESPONSES).join(', ')}`);
 			return (value || undefined) as MockScenario | undefined;
+		}
+	},
+	// Optional, so the app starts without it; "Generuoti rekomendacijas" then says generation is off (UC-7).
+	GEMINI_API_KEY: {
+		description: 'Google Gemini API key for hike recommendations (UC-7), from aistudio.google.com. Server side only.',
+		schema: (value) => value || undefined
+	},
+	GEMINI_MODEL: {
+		description: 'Gemini model for recommendations. Empty: gemini-flash-latest.',
+		schema: (value) => value || undefined
+	},
+	// UC-7 without an API key: canned recommendations (src/lib/server/gemini/recommendation-format.ts)
+	RECOMMENDATIONS_MOCK: {
+		description: `Mock recommendations instead of Gemini: ${RECOMMENDATION_MOCKS.join(', ')}`,
+		schema: (value) => {
+			if (value && !isRecommendationMock(value)) {
+				throw new Error(`RECOMMENDATIONS_MOCK must be one of: ${RECOMMENDATION_MOCKS.join(', ')}`);
+			}
+			return (value || undefined) as RecommendationMock | undefined;
 		}
 	}
 });
