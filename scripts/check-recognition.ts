@@ -61,22 +61,26 @@ assert.equal(parseRecognition(answer({ name: 'Hiking boot' })).name, 'Žygio bat
 assert.equal(parseRecognition(answer({ name: 'Gps device', category: 'Tools' })).name, 'GPS imtuvas');
 assert.equal(parseRecognition(answer({ name: 'Headlamp', category: 'Navigation' })).category, 'TOOLS', 'a known item has its own category');
 assert.deepEqual(
-	[parseRecognition(answer({ name: 'Ice axe', category: 'Tools' })), parseRecognition(answer({ name: 'ToString' }))].map(
+	[parseRecognition(answer({ name: 'Keen' })), parseRecognition(answer({ name: 'ToString' }))].map(
 		({ name, category }) => [name, category]
 	),
-	[['', 'TOOLS'], ['', 'FOOTWEAR']],
-	"no Lithuanian name: the user types it, the model's category stays"
+	[['Keen', 'FOOTWEAR'], ['ToString', 'FOOTWEAR']],
+	"no Lithuanian name: the model's first line as is (the user can edit it), the model's category"
 );
 assert.deepEqual(parseRecognition(answer({ suitability: 'COLD, Warm, HOT' })).suitability, ['COLD', 'WARM', 'HOT']);
 assert.deepEqual(parseRecognition(answer({ suitability: 'Warm' })).suitability, ['WARM']);
 assert.deepEqual(parseRecognition(answer({ attributes: [] })).attributes, [], 'no attributes');
 assert.deepEqual(
-	parseRecognition(answer({ attributes: ['waterproof = no', 'colour = red', 'toString', 'pack_volume = compact'] })).attributes,
+	parseRecognition(answer({ attributes: ['waterproof = no', 'colour = red', 'hood = yes', 'toString', 'pack_volume = compact'] }))
+		.attributes,
 	[
 		{ name: 'neperšlampamas', value: 'ne' },
+		{ name: 'colour', value: 'red' },
+		{ name: 'hood', value: '' },
+		{ name: 'toString', value: '' },
 		{ name: 'užima vietos', value: 'mažai' }
 	],
-	'only lines the grammar allows, nothing inherited'
+	'no translation: the line as the model wrote it ("yes" = plain tag), nothing inherited'
 );
 assert.throws(() => parseRecognition(answer({ category: 'Shoes' })), RecognitionError, 'unknown category = broken');
 assert.throws(() => parseRecognition('{"item": "hiking boots"}'), RecognitionError, 'not the grammar (JSON) = broken');
@@ -150,9 +154,9 @@ assert.deepEqual(item((await recognize('noAttributes')).result), {
 	suitability: ['WARM'],
 	attributes: []
 });
-// Gear we have no Lithuanian name for: the user types the name, the rest is pre-filled
+// Gear we have no Lithuanian name for: the model's name as is
 assert.deepEqual(item((await recognize('unknownItem')).result), {
-	name: '',
+	name: 'Ice axe',
 	category: 'TOOLS',
 	suitability: ['COLD'],
 	attributes: [{ name: 'užima vietos', value: 'daug' }]

@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto';
 import { ITEM_CATEGORIES, TEMPERATURES, type InventoryItem, type ItemCategory } from '#lib/domain.ts';
 import type { ModelPhoto } from '#lib/server/photo.ts';
+import { typedAttribute } from '#lib/validation.ts';
 
 export const RECOGNITION_TIMEOUT_MS = 30_000;
 
@@ -80,7 +81,7 @@ const ATTRIBUTES: Record<string, [name: string, value: string]> = {
 	'pack_volume = bulky': ['užima vietos', 'daug']
 };
 
-/** name is '' when we have no Lithuanian name for what the model said: the user types it. */
+/** name: Lithuanian when ITEM_TYPES knows it, otherwise the model's first line as is (e.g. a brand like "Keen"). */
 export type RecognizedItem = Omit<InventoryItem, 'id'>;
 
 /** llamaModel or mockModel. Throws ModelUnavailable (retried), a TimeoutError or any other error. */
@@ -122,13 +123,12 @@ export function parseRecognition(content: string): RecognizedItem {
 	if (!ITEM_CATEGORIES.includes(category)) {
 		throw new RecognitionError(FAILED, { cause: new Error(`unexpected answer: ${content.slice(0, 300)}`) });
 	}
-	const [name, knownCategory] = ITEM_NAMES.get(itemKey(english)) ?? ['', category];
+	const [name, knownCategory] = ITEM_NAMES.get(itemKey(english)) ?? [english, category];
 	const suitability = TEMPERATURES.filter((t) => temperatures.toUpperCase().split(', ').includes(t));
-	const attributes = lines
-		.split('\n')
-		.filter((line) => Object.hasOwn(ATTRIBUTES, line.trim()))
-		.map((line) => ATTRIBUTES[line.trim()])
-		.map(([name, value]) => ({ name, value }));
+	const attributes = lines.split('\n').flatMap((line) => {
+		const [name, value = ''] = Object.hasOwn(ATTRIBUTES, line.trim()) ? ATTRIBUTES[line.trim()] : line.split(' = ');
+		return typedAttribute(name, value) ?? [];
+	});
 	return { name, category: knownCategory, suitability, attributes };
 }
 

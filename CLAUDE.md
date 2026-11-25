@@ -208,7 +208,9 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
   system prompt and a GBNF grammar (`gear.gbnf`) forces a text answer: an English name, `Category:`, `Suitability:` (COLD/Warm/HOT)
   and per-category attribute lines (`waterproof = yes`, `ankle_support = high`, ...). The app sends **only the photo** (no
   prompt, no `response_format`, which would replace the grammar) and `parseRecognition` maps the answer to Lithuanian: names via
-  `ITEM_TYPES` (unknown name → empty, the user types it), attribute lines via `ATTRIBUTES`. **Change both together with the grammar.**
+  `ITEM_TYPES` (unknown name → the model's English first line as is, often a brand like "Keen", until the grammar gets a fixed
+  list of item names), attribute lines via `ATTRIBUTES` (unknown line → as the model wrote it). Untranslated English is a
+  demo shortcut. **Change both together with the grammar.**
   Asked for Lithuanian, the 3B model made up words. The grammar has no photo verdict, so the photo hint gives the bright place /
   one item tip up front.
 - "Generuoti iš naujo" (Vincentas, 2026-11-24): after a **successful** first recognition, the same photo can be regenerated up to
