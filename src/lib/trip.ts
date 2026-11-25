@@ -2,7 +2,7 @@
 // Shared by the server and the page. Dates are calendar dates as "YYYY-MM-DD" strings (VT-1).
 import type { Season } from '#lib/domain.ts';
 
-export const TRIP_LIMITS = { location: 200 } as const;
+export const TRIP_LIMITS = { location: 200, locationMin: 3 } as const;
 
 /** More days than this until departure → "the weather estimate may be inaccurate" (FR-37). Forecasts reach ~7–10 days. */
 export const FAR_DEPARTURE_DAYS = 10;
@@ -63,7 +63,9 @@ export function readTripForm(raw: TripInput, today: string) {
 	const { location, departureDate, returnDate } = values;
 	const errors: TripErrors = {};
 
-	if (!location) errors.location = 'Įvesk tikslią žygio vietą.';
+	// Catches only the obvious ("d", "123"); whether the place exists is checked by the LLM (UC-7).
+	if (location.length < TRIP_LIMITS.locationMin || !/\p{L}/u.test(location))
+		errors.location = 'Įvesk tikslią žygio vietą.';
 	else if (location.length > TRIP_LIMITS.location)
 		errors.location = `Žygio vieta per ilga: daugiausia ${TRIP_LIMITS.location} simbolių.`;
 

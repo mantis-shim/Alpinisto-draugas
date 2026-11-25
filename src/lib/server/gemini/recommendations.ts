@@ -9,8 +9,10 @@ import {
 	InvalidAnswer,
 	RECOMMENDATION_SCHEMA,
 	SYSTEM_PROMPT,
+	UnknownLocation,
 	buildRequest,
 	mockAnswer,
+	mockUnknownLocation,
 	parseRecommendations,
 	type MockScenario
 } from '#lib/server/gemini/recommendation-format.ts';
@@ -40,6 +42,7 @@ const NO_CONSENT =
 const OFF = 'Rekomendacijų generavimas šiuo metu neįjungtas. Bandyk vėliau.';
 const FAILED = 'Nepavyko sugeneruoti rekomendacijų. Bandyk dar kartą.';
 const BUSY = 'Šiuo metu išnaudotas rekomendacijų užklausų limitas. Bandyk vėliau.';
+const UNKNOWN_PLACE = 'Nepavyko atpažinti žygio vietos. Patikslink ją ir bandyk dar kartą.';
 const REFUSED = 'Dirbtinis intelektas negalėjo pateikti rekomendacijų šiai kelionei. Patikslink žygio vietą ir bandyk dar kartą.';
 
 const openTrip = (userId: string) => ({ userId, plan: { $exists: false } });
@@ -69,6 +72,7 @@ export type LlmSettings = { apiKey?: string; model?: string; mock?: MockScenario
 /** Asks Gemini (or the mock) and returns its JSON text. */
 async function askModel(settings: LlmSettings, user: string, mock: () => string): Promise<string> {
 	if (settings.mock === 'ok') return mock();
+	if (settings.mock === 'unknown-location') return mockUnknownLocation();
 	if (settings.mock === 'error') throw new GenerationError(FAILED, true);
 	if (settings.mock === 'refusal') throw new GenerationError(REFUSED, true);
 	if (!settings.apiKey) throw new GenerationError(OFF, false);
@@ -164,6 +168,8 @@ export async function generateRecommendations(userId: string, settings: LlmSetti
 		recommendations = parseRecommendations(answer, keyed);
 	} catch (error) {
 		if (error instanceof InvalidAnswer) throw new GenerationError(FAILED, true, { cause: error });
+		// Not a retry: the same location gets the same answer, the user changes it with "Keisti".
+		if (error instanceof UnknownLocation) throw new GenerationError(UNKNOWN_PLACE, false);
 		throw error;
 	}
 

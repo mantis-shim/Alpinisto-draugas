@@ -44,6 +44,11 @@ assert.ok(read('Rysy', today, today).ok, 'a one-day hike today is fine');
 
 const empty = read('  ', '', '').errors;
 assert.ok(empty.location && empty.departureDate && empty.returnDate, 'every missing field is marked');
+for (const bad of ['d', 'Uo', '123', '!!!', '  12 ']) {
+	assert.ok(read(bad, '2026-12-05', '2026-12-07').errors.location, `not a location: "${bad}"`);
+}
+assert.ok(read('Uoš', '2026-12-05', '2026-12-07').ok, '3 characters with letters is fine');
+assert.ok(read('K2', '2026-12-05', '2026-12-07').errors.location, 'shorter than 3 characters');
 assert.ok(read('x'.repeat(201), '2026-12-05', '2026-12-07').errors.location, 'too long');
 assert.ok(read('x'.repeat(200), '2026-12-05', '2026-12-07').ok, '200 characters is fine');
 assert.ok(read('Rysy', '2026-11-22', '2026-11-25').errors.departureDate, 'departure in the past');

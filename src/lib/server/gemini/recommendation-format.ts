@@ -52,6 +52,9 @@ enough (an unknown or vague location, no fitness level), say so in that field in
 This is advice, not a guarantee: never say the hike is certainly safe or certainly unsafe.
 
 Fields:
+- locationRecognized: true only if the location is a real place you can identify (a mountain, range, national park,
+  region, town or route). false for random letters, a word that is not a place, or a place you cannot identify. When it
+  is false, the other text fields may be empty strings and the lists empty: nothing is shown to the hiker.
 - difficulty: EASY, MEDIUM or HARD for a typical route at this location.
 - feasibility: the route's difficulty, typical distance and elevation gain, and the time it takes, compared with the days
   available (durationDays). If it is not realistic in that time, say so clearly.
@@ -78,6 +81,7 @@ export const RECOMMENDATION_SCHEMA = {
 	type: 'object',
 	additionalProperties: false,
 	required: [
+		'locationRecognized',
 		'difficulty',
 		'feasibility',
 		'fitnessComparison',
@@ -88,6 +92,7 @@ export const RECOMMENDATION_SCHEMA = {
 		'toBuy'
 	],
 	properties: {
+		locationRecognized: { type: 'boolean', description: 'Ar žygio vieta yra tikra, atpažįstama vieta' },
 		difficulty: { type: 'string', enum: [...HIKE_DIFFICULTIES] },
 		feasibility: text('Įveikiamumas per turimą laiką, lietuviškai'),
 		fitnessComparison: text('Sudėtingumo palyginimas su fiziniu pasirengimu, lietuviškai'),
@@ -144,6 +149,8 @@ export function buildRequest({ trip, fitnessLevel, inventory }: RecommendationIn
 }
 
 export class InvalidAnswer extends Error {}
+/** The model doesn't recognise the trip location as a real place: nothing is stored, the user corrects the location. */
+export class UnknownLocation extends Error {}
 
 const MAX_ITEMS = 40;
 const str = (value: unknown, field: string) => {
@@ -172,6 +179,8 @@ export function parseRecommendations(json: string, keyed: Map<string, InventoryI
 		throw new InvalidAnswer('not JSON', { cause: error });
 	}
 	if (!answer || typeof answer !== 'object') throw new InvalidAnswer('not an object');
+	if (typeof answer.locationRecognized !== 'boolean') throw new InvalidAnswer('locationRecognized is not a boolean');
+	if (!answer.locationRecognized) throw new UnknownLocation('location not recognised');
 
 	const difficulty = oneOf(answer.difficulty, HIKE_DIFFICULTIES);
 	if (!difficulty) throw new InvalidAnswer(`unknown difficulty ${String(answer.difficulty)}`);
@@ -215,7 +224,7 @@ export function parseRecommendations(json: string, keyed: Map<string, InventoryI
 }
 
 // Mock answers (RECOMMENDATIONS_MOCK in .env): the whole flow without an API key, also used by the self-check.
-export const MOCK_SCENARIOS = ['ok', 'error', 'refusal'] as const;
+export const MOCK_SCENARIOS = ['ok', 'unknown-location', 'error', 'refusal'] as const;
 export type MockScenario = (typeof MOCK_SCENARIOS)[number];
 export const isMockScenario = (value: string): value is MockScenario => (MOCK_SCENARIOS as readonly string[]).includes(value);
 
@@ -224,6 +233,7 @@ const NOTE = '(Bandomasis atsakymas be DI.)';
 /** The model's JSON for the "ok" scenario: the first three inventory items to take, two items to buy. */
 export function mockAnswer(keyed: Map<string, InventoryItem>, fitnessLevel: FitnessLevel | null) {
 	return JSON.stringify({
+		locationRecognized: true,
 		difficulty: 'MEDIUM',
 		feasibility: `Maršrutas vidutinio sudėtingumo, per turimas dienas įveikiamas. ${NOTE}`,
 		fitnessComparison: fitnessLevel
@@ -239,3 +249,17 @@ export function mockAnswer(keyed: Map<string, InventoryItem>, fitnessLevel: Fitn
 		]
 	});
 }
+
+/** The model's JSON for the "unknown-location" scenario: it doesn't recognise the place. */
+export const mockUnknownLocation = () =>
+	JSON.stringify({
+		locationRecognized: false,
+		difficulty: 'EASY',
+		feasibility: '',
+		fitnessComparison: '',
+		weather: '',
+		clothing: '',
+		locationDescription: '',
+		takeFromInventory: [],
+		toBuy: []
+	});

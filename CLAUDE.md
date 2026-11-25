@@ -260,7 +260,8 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
     and may change (reliable forecasts reach ~7–10 days). "Today" is the date in Europe/Vilnius.
   - Season from the departure month: Dec–Feb WINTER, Mar–May SPRING, Jun–Aug SUMMER, Sep–Nov AUTUMN.
   - Duration counts both ends: a one-day hike is 1 day.
-  - Location: max 200 characters.
+  - Location: 3–200 characters with at least one letter ("d" or "123" → "Įvesk tikslią žygio vietą."). Whether the place
+    exists is checked by the LLM when generating (UC-7, `locationRecognized`).
   - A user has **at most one open trip** (a hike without `plan`). "Išsaugoti" saves it and `/plan` shows its summary
     (location, dates, duration, season, far-date warning) with "Keisti" (back to the filled form, updates the same trip)
     and "Generuoti rekomendacijas". With no open trip, `/plan` shows an empty form. Trips with `plan` belong to the
@@ -289,13 +290,15 @@ IDs: US = user story, UC = use case, FR = functional requirement. Owner = the te
     reads it). Owned items keep the inventory's own name and category and get `inventoryItemId`; unknown or repeated keys
     are dropped. Enums are upper-cased; an unknown category becomes OTHER, an unknown priority RECOMMENDED. An empty
     `locationDescription` is left out (FR-45). An invalid answer is never stored.
+    The answer starts with `locationRecognized`: false (e.g. "asdf") throws `UnknownLocation`, nothing is stored and the
+    user sees "Nepavyko atpažinti žygio vietos. Patikslink ją ir bandyk dar kartą." (no retry button: they fix it with "Keisti").
   - `recommendations.ts`: `generateRecommendations(userId, { apiKey, model, mock })` checks the open trip and the latest
     consent (FR-8, FR-10), calls Gemini (see LLM notes for retries) and sets `plan` only on a trip that still has none, so a second
     click can't overwrite it. Errors are `GenerationError` with a Lithuanian message and `retry` ("Bandyti dar kartą").
     `generationNotes` gives the summary its warnings: no consent (button disabled), empty inventory (2a: the warning is
     next to the button, clicking it is the confirmation), no questionnaire (2b, link to the questionnaire).
   - `/plan` `?/generate` redirects to `/recommendations/[id]` (UC-8). A spinner shows while the request runs.
-  - Without a key: `RECOMMENDATIONS_MOCK=ok|error|refusal` in `.env` (restart the app). With neither, the button says
+  - Without a key: `RECOMMENDATIONS_MOCK=ok|unknown-location|error|refusal` in `.env` (restart the app). With neither, the button says
     generation is off.
 
 ### UC-8 View recommendations (S2) FR-49–52

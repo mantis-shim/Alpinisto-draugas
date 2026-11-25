@@ -5,8 +5,10 @@ import type { InventoryItem } from '#lib/domain.ts';
 import {
 	InvalidAnswer,
 	RECOMMENDATION_SCHEMA,
+	UnknownLocation,
 	buildRequest,
 	mockAnswer,
+	mockUnknownLocation,
 	parseRecommendations
 } from '#lib/server/gemini/recommendation-format.ts';
 
@@ -38,6 +40,7 @@ assert.deepEqual([...RECOMMENDATION_SCHEMA.required].sort(), Object.keys(RECOMME
 
 // A valid answer
 const answer = {
+	locationRecognized: true,
 	difficulty: 'hard', // enum capitalisation isn't guaranteed
 	feasibility: ' Per 3 dienas įveikiama. ',
 	fitnessComparison: 'Gali būti sunku.',
@@ -81,6 +84,11 @@ assert.throws(() => parseRecommendations('ne JSON', keyed), InvalidAnswer);
 assert.throws(broken({ difficulty: 'EXTREME' }), InvalidAnswer);
 assert.throws(broken({ weather: '' }), InvalidAnswer);
 assert.throws(broken({ toBuy: 'nėra' }), InvalidAnswer);
+assert.throws(broken({ locationRecognized: 'taip' }), InvalidAnswer);
+
+// An unrecognised location ("asdf") is not stored, even with empty fields
+assert.throws(broken({ locationRecognized: false }), UnknownLocation);
+assert.throws(() => parseRecommendations(mockUnknownLocation(), keyed), UnknownLocation);
 
 // The mock answer goes through the same checks
 const mocked = parseRecommendations(mockAnswer(keyed, null), keyed);
